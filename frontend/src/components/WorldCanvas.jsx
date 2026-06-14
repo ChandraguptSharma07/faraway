@@ -361,29 +361,41 @@ function drawForceArrows(ctx, cx, headY, sys, frame, isAero, lost) {
 }
 
 // Live, judge-verifiable contact-force identity P = k_c·(z₁ − y_wire).
+// Right-aligned to end clear of the top-right PHYSICS toggle (and the train).
 function drawEquationStrip(ctx, W, y0, H, sys, frame, lost) {
   const z1 = sys.head_mm ?? 0
   const yw = frame.wire_mm ?? 0
   const P = sys.contact_force ?? 0
   const d = z1 - yw
-  const x = W - 372
+  const line1 = 'P = k_c · (z₁ − y_wire)   k_c = 50 kN/m'
+  const pre = lost
+    ? `z₁ ${z1.toFixed(1)} < y_wire ${yw.toFixed(1)} mm  →  P = max(·,0) = 0  · SEPARATION`
+    : `z₁ ${z1.toFixed(1)}  y_wire ${yw.toFixed(1)} mm  →  50·(${d.toFixed(1)}) = `
+  const suf = lost ? '' : `${P.toFixed(0)} N ✓`
+
   ctx.save()
   ctx.textAlign = 'left'
   ctx.shadowColor = 'rgba(0,0,0,0.9)'
   ctx.shadowBlur = 4
+  // measure with the fonts actually used
+  ctx.font = `700 11px ${MONO}`
+  const w1 = ctx.measureText(line1).width
+  ctx.font = `700 11.5px ${MONO}`
+  const wpre = ctx.measureText(pre).width
+  const wsuf = suf ? ctx.measureText(suf).width : 0
+  const maxW = Math.max(w1, wpre + wsuf)
+  // block ends 128px from the right edge (clears the PHYSICS toggle); never left of mid-lane
+  const x = Math.max(W - 128 - maxW, W * 0.46)
+
   ctx.font = `700 11px ${MONO}`
   ctx.fillStyle = 'rgba(150,166,184,0.95)'
-  ctx.fillText('P = k_c · (z₁ − y_wire)   k_c = 50 kN/m', x, y0 + 20)
+  ctx.fillText(line1, x, y0 + 20)
   ctx.font = `700 11.5px ${MONO}`
-  if (lost) {
-    ctx.fillStyle = ARC
-    ctx.fillText(`z₁ ${z1.toFixed(1)} < y_wire ${yw.toFixed(1)} mm  →  P = max(·,0) = 0  · SEPARATION`, x, y0 + 37)
-  } else {
-    ctx.fillStyle = 'rgba(231,238,246,0.95)'
-    ctx.fillText(`z₁ ${z1.toFixed(1)}  y_wire ${yw.toFixed(1)} mm  →  50·(${d.toFixed(1)}) = `, x, y0 + 37)
-    const w = ctx.measureText(`z₁ ${z1.toFixed(1)}  y_wire ${yw.toFixed(1)} mm  →  50·(${d.toFixed(1)}) = `).width
+  ctx.fillStyle = lost ? ARC : 'rgba(231,238,246,0.95)'
+  ctx.fillText(pre, x, y0 + 37)
+  if (suf) {
     ctx.fillStyle = ACCENT
-    ctx.fillText(`${P.toFixed(0)} N ✓`, x + w, y0 + 37)
+    ctx.fillText(suf, x + wpre, y0 + 37)
   }
   ctx.restore()
 }
