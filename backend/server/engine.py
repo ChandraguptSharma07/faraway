@@ -1,0 +1,164 @@
+"""Real-time simulation engine: steps PASSIVE and AeroPINN on the SAME disturbance.
+
+The WebSocket server drives this engine, pushing one frame per tick. Both systems
+share a single Disturbance instance and the same live speed / tension / turbulence /
+gust inputs, so their contrast is fair. Frontend controls mutate the runtime knobs.
+"""
+
+from __future__ import annotations
+
+from collections import deque
+
+import numpy as np
+
+from backend.controller.mpc import PINNMPCController
+from backend.pinn.data import _wire_features
+from backend.pinn.predict import PINNPredictor
+from backend.sim.disturbance import Disturbance
+from backend.sim.parameters import (
+    BeyondEnvelope,
+    CatenaryParams,
+    PantographParams,
+    kmh_to_ms,
+)
+from backend.sim.solver import deriv
+
+
+class RuntimeParams:
+    """Mutable live knobs (BeyondEnvelope is frozen, so we mirror it here)."""
+
+    def __init__(self):
+        self.speed_kmh = 250.0
+        self.tension_factor = 1.0
+        self.turbulence_gain = 1.0
+        self.gust = 0.0  # decays each step
+
+    def beyond(self) -> BeyondEnvelope:
+        return BeyondEnvelope(
+            tension_factor=self.tension_factor,
+            turbulence_gain=self.turbulence_gain,
+            gust=self.gust,
+        )
+
+
+class Engine:
+    def __init__(self, dt: float = 1.0e-3, window_s: float = 3.0, seed: int = 2024):
+        self.dt = dt
+        self.cat = CatenaryParams()
+        self.panto = PantographParams()
+        self.rp = RuntimeParams()
+        self.dist = Disturbance(self.cat, seed=seed)
+        self.predictor = PINNPredictor()
+        self.setpoint = 115.0
+
+        self.t = 0.0
+        speed_ms = kmh_to_ms(self.rp.speed_kmh)
+        self.state_p = self._equilibrium(speed_ms)
+        self.state_a = self._equilibrium(speed_ms)
+        self.controller = PINNMPCController(
+            self.predictor, self.dist, speed_ms, self.rp.beyond(), setpoint=self.setpoint
+        )
+
+        n = int(window_s / dt)
+        self.fwin_p: deque = deque(maxlen=n)
+        self.fwin_a: deque = deque(maxlen=n)
+        self.force_p = 0.0
+        self.force_a = 0.0
+        self.f_control = 0.0
+        self.latency_ms = 0.0
+        self.gust_decay = np.exp(-dt / 0.18)  # ~0.18 s gust time-constant
+
+        # Settle the start-up transient (the static equilibrium ignores the disturbance
+        # phase at t=0), then clear the rolling-metric windows so stats start clean.
+        self.step(int(0.6 / dt))
+        self.fwin_p.clear()
+        self.fwin_a.clear()
+
+    def _equilibrium(self, speed_ms):
+        from backend.sim.solver import static_equilibrium
+        return static_equilibrium(speed_ms, self.dist, self.panto, self.rp.beyond())
+
+    # --- inputs from frontend ---
+    def set_speed(self, kmh: float):
+        self.rp.speed_kmh = float(np.clip(kmh, 80, 400))
+
+    def set_tension(self, factor: float):
+        self.rp.tension_factor = float(np.clip(factor, 0.3, 1.0))
+
+    def set_turbulence(self, gain: float):
+        self.rp.turbulence_gain = float(np.clip(gain, 0.5, 4.0))
+
+    def trigger_gust(self, magnitude: float = 70.0):
+        self.rp.gust = float(magnitude)
+
+    def _rk4(self, state, speed_ms, beyond, f_control):
+        dt = self.dt
+        k1, _ = deriv(state, self.t, speed_ms, self.dist, self.panto, beyond, f_control)
+        k2, _ = deriv(state + 0.5 * dt * k1, self.t + 0.5 * dt, speed_ms, self.dist, self.panto, beyond, f_control)
+        k3, _ = deriv(state + 0.5 * dt * k2, self.t + 0.5 * dt, speed_ms, self.dist, self.panto, beyond, f_control)
+        k4, _ = deriv(state + dt * k3, self.t + dt, speed_ms, self.dist, self.panto, beyond, f_control)
+        return state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    def step(self, n_steps: int = 1):
+        speed_ms = kmh_to_ms(self.rp.speed_kmh)
+        for _ in range(n_steps):
+            beyond = self.rp.beyond()
+            # keep controller's live view in sync
+            self.controller.speed_ms = speed_ms
+            self.controller.beyond = beyond
+
+            self.f_control = self.controller(self.t, self.state_a, self.force_a)
+            self.latency_ms = self.controller.last_latency_ms
+
+            self.state_p = self._rk4(self.state_p, speed_ms, beyond, 0.0)
+            self.state_a = self._rk4(self.state_a, speed_ms, beyond, self.f_control)
+            self.t += self.dt
+
+            yw = float(self.dist.y_wire(self.t, speed_ms, beyond))
+            self.force_p = max(self.panto.kc * (self.state_p[0] - yw), 0.0)
+            self.force_a = max(self.panto.kc * (self.state_a[0] - yw), 0.0)
+            self.fwin_p.append(self.force_p)
+            self.fwin_a.append(self.force_a)
+
+            # decay gust toward 0
+            if self.rp.gust != 0.0:
+                self.rp.gust *= self.gust_decay
+                if abs(self.rp.gust) < 0.5:
+                    self.rp.gust = 0.0
+
+    def _metrics(self, win):
+        if len(win) < 2:
+            return {"std": 0.0, "arc_pct": 0.0}
+        a = np.fromiter(win, dtype=float)
+        return {"std": float(a.std()), "arc_pct": 100.0 * float((a <= 0.0).mean())}
+
+    def frame(self) -> dict:
+        speed_ms = kmh_to_ms(self.rp.speed_kmh)
+        beyond = self.rp.beyond()
+        yw = float(self.dist.y_wire(self.t, speed_ms, beyond))
+        mp, ma = self._metrics(self.fwin_p), self._metrics(self.fwin_a)
+        return {
+            "t": round(self.t, 4),
+            "speed_kmh": round(self.rp.speed_kmh, 1),
+            "tension_factor": round(self.rp.tension_factor, 3),
+            "turbulence_gain": round(self.rp.turbulence_gain, 3),
+            "gust_active": self.rp.gust != 0.0,
+            "wire_mm": round(1e3 * yw, 3),
+            "setpoint_N": self.setpoint,
+            "passive": {
+                "head_mm": round(1e3 * float(self.state_p[0]), 3),
+                "contact_force": round(self.force_p, 2),
+                "contact_lost": bool(self.force_p <= 0.0),
+                "std": round(mp["std"], 2),
+                "arc_pct": round(mp["arc_pct"], 2),
+            },
+            "aeropinn": {
+                "head_mm": round(1e3 * float(self.state_a[0]), 3),
+                "contact_force": round(self.force_a, 2),
+                "contact_lost": bool(self.force_a <= 0.0),
+                "std": round(ma["std"], 2),
+                "arc_pct": round(ma["arc_pct"], 2),
+                "f_control": round(self.f_control, 2),
+            },
+            "pinn_latency_ms": round(self.latency_ms, 3),
+        }
