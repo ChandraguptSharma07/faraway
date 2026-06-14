@@ -1,0 +1,50 @@
+.spine {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  background: #06080c;
+  color: #e8eef5;
+}
+
+.spine h1 {
+  margin: 0;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+
+.sub {
+  margin: 0;
+  color: #6b7785;
+  font-size: 0.85rem;
+}
+
+.badge {
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border: 1px solid #1c2530;
+}
+.badge.connected { color: #21e6c1; border-color: #21e6c1; }
+.badge.connecting { color: #c9a227; }
+.badge.disconnected, .badge.error { color: #ff4d4d; border-color: #ff4d4d; }
+
+.counter {
+  font-family: ui-monospace, monospace;
+  font-size: 4rem;
+  font-weight: 700;
+  color: #21e6c1;
+  text-shadow: 0 0 24px rgba(33, 230, 193, 0.35);
+}
+
+.rate {
+  font-family: ui-monospace, monospace;
+  color: #6b7785;
+  font-size: 0.9rem;
+}
