@@ -42,13 +42,13 @@ class RuntimeParams:
 
 
 class Engine:
-    def __init__(self, dt: float = 1.0e-3, window_s: float = 3.0, seed: int = 2024):
+    def __init__(self, dt: float = 1.0e-3, window_s: float = 3.0, seed: int = 2024, predictor=None):
         self.dt = dt
         self.cat = CatenaryParams()
         self.panto = PantographParams()
         self.rp = RuntimeParams()
         self.dist = Disturbance(self.cat, seed=seed)
-        self.predictor = PINNPredictor()
+        self.predictor = predictor or PINNPredictor()
         self.setpoint = 115.0
 
         self.t = 0.0
