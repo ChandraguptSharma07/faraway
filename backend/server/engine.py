@@ -138,6 +138,7 @@ class Engine:
         beyond = self.rp.beyond()
         yw = float(self.dist.y_wire(self.t, speed_ms, beyond))
         mp, ma = self._metrics(self.fwin_p), self._metrics(self.fwin_a)
+        s_wire = self.cat.s_wire_eff
         return {
             "t": round(self.t, 4),
             "speed_kmh": round(self.rp.speed_kmh, 1),
@@ -150,6 +151,7 @@ class Engine:
                 "head_mm": round(1e3 * float(self.state_p[0]), 3),
                 "contact_force": round(self.force_p, 2),
                 "contact_lost": bool(self.force_p <= 0.0),
+                "uplift_mm": round(1e3 * max(self.force_p, 0.0) / s_wire, 2),
                 "std": round(mp["std"], 2),
                 "arc_pct": round(mp["arc_pct"], 2),
             },
@@ -157,6 +159,7 @@ class Engine:
                 "head_mm": round(1e3 * float(self.state_a[0]), 3),
                 "contact_force": round(self.force_a, 2),
                 "contact_lost": bool(self.force_a <= 0.0),
+                "uplift_mm": round(1e3 * max(self.force_a, 0.0) / s_wire, 2),
                 "std": round(ma["std"], 2),
                 "arc_pct": round(ma["arc_pct"], 2),
                 "f_control": round(self.f_control, 2),
