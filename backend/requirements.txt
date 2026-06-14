@@ -1,0 +1,15 @@
+# AeroPINN backend dependencies (Python >= 3.10; built/verified on 3.14).
+#
+# IMPORTANT: install the CPU-only torch build from the PyTorch CPU index:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r backend/requirements.txt
+# (torch is listed here for reference but should come from the CPU index above
+#  to avoid pulling a large CUDA build.)
+
+torch>=2.9        # CPU build — see note above
+numpy>=2.0
+scipy>=1.13
+fastapi>=0.115
+uvicorn[standard]>=0.30
+websockets>=13
+pyserial>=3.5

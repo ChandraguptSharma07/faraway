@@ -1,0 +1,37 @@
+# --- AeroPINN .gitignore ---
+
+# Working notes — local only, never pushed
+self_notes/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# PyTorch / training scratch (keep the small final model under backend/pinn/)
+*.tmp.pt
+checkpoints/
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.local
+
+# Env / secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
