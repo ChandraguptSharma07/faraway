@@ -1,43 +1,67 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import './App.css'
+import { useTelemetry } from './hooks/useTelemetry'
+import WorldCanvas from './components/WorldCanvas'
+import ForceTrace from './components/ForceTrace'
+import Readouts from './components/Readouts'
+import Controls from './components/Controls'
+import CredibilityView from './components/CredibilityView'
 
-// Step 0 throwaway spine: connect to the FastAPI WebSocket and display the live
-// counter. Proves the backend<->frontend round-trip. Replaced in Step 6.
-const WS_URL = 'ws://127.0.0.1:8000/ws/spine'
-
-function App() {
-  const [status, setStatus] = useState('connecting')
-  const [counter, setCounter] = useState(null)
-  const [rate, setRate] = useState(0)
-  const lastRef = useRef({ t: null, n: 0 })
+export default function App() {
+  const { frameRef, historyRef, connected, send } = useTelemetry()
+  const [showCred, setShowCred] = useState(false)
+  const [reduced, setReduced] = useState(false)
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL)
-    ws.onopen = () => setStatus('connected')
-    ws.onclose = () => setStatus('disconnected')
-    ws.onerror = () => setStatus('error')
-    ws.onmessage = (e) => {
-      const msg = JSON.parse(e.data)
-      setCounter(msg.counter)
-      const prev = lastRef.current
-      if (prev.t != null) {
-        const dt = msg.t - prev.t
-        if (dt > 0) setRate(Math.round((msg.counter - prev.n) / dt))
-      }
-      lastRef.current = { t: msg.t, n: msg.counter }
-    }
-    return () => ws.close()
+    const m = window.matchMedia('(prefers-reduced-motion: reduce)')
+    setReduced(m.matches)
+    const h = (e) => setReduced(e.matches)
+    m.addEventListener('change', h)
+    return () => m.removeEventListener('change', h)
   }, [])
 
   return (
-    <main className="spine">
-      <h1>AeroPINN</h1>
-      <p className="sub">backend ↔ frontend spine check</p>
-      <div className={`badge ${status}`}>{status}</div>
-      <div className="counter">{counter ?? '—'}</div>
-      <div className="rate">{rate} msg/s</div>
-    </main>
+    <div className="app">
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark">◈</span>
+          <span className="brand-name">AeroPINN</span>
+          <span className="brand-sub">active pantograph stabilization · PINN-MPC</span>
+        </div>
+        <div className="topbar-right">
+          <button className="cred-trigger" onClick={() => setShowCred(true)}>
+            VALIDATION
+          </button>
+          <span className={`conn ${connected ? 'on' : 'off'}`}>
+            <i /> {connected ? 'LIVE' : 'OFFLINE'}
+          </span>
+        </div>
+      </header>
+
+      <section className="world-zone">
+        <WorldCanvas frameRef={frameRef} prefersReducedMotion={reduced} />
+        {!connected && (
+          <div className="world-offline mono">
+            connecting to backend on :8000…
+          </div>
+        )}
+      </section>
+
+      <section className="instrument-zone">
+        <div className="panel trace-panel">
+          <div className="panel-title">CONTACT FORCE · LIVE</div>
+          <ForceTrace historyRef={historyRef} />
+        </div>
+        <div className="panel readout-panel">
+          <Readouts frameRef={frameRef} />
+        </div>
+        <div className="panel control-panel">
+          <div className="panel-title">OPERATOR CONSOLE</div>
+          <Controls send={send} />
+        </div>
+      </section>
+
+      {showCred && <CredibilityView onClose={() => setShowCred(false)} />}
+    </div>
   )
 }
-
-export default App
