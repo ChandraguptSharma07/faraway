@@ -68,9 +68,10 @@ class Engine:
         self.latency_ms = 0.0
         self.gust_decay = np.exp(-dt / 0.18)  # ~0.18 s gust time-constant
 
-        # Settle the start-up transient (the static equilibrium ignores the disturbance
-        # phase at t=0), then clear the rolling-metric windows so stats start clean.
-        self.step(int(0.6 / dt))
+        # Settle the start-up transient before streaming. The collector-head mode is
+        # lightly damped (decay ~1.4 s), so we warm up ~3 s and then clear the rolling
+        # metric windows, so the baseline stats start at the true steady state.
+        self.step(int(3.0 / dt))
         self.fwin_p.clear()
         self.fwin_a.clear()
 
