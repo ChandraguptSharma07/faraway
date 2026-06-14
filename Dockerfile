@@ -34,4 +34,4 @@ ENV PORT=8000
 
 # Run the server
 # Use the PORT env var provided by Render
-CMD uvicorn backend.server.app:app --host 0.0.0.0 --port $PORT
+CMD uvicorn backend.server.app:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'

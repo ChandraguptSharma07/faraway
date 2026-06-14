@@ -151,7 +151,7 @@ def _handle_input(engine: Engine, msg: dict):
 @app.websocket("/ws")
 async def ws(ws: WebSocket):
     await ws.accept()
-    engine = Engine()
+    engine = Engine(predictor=get_predictor())
     servo = get_servo()  # optional; no-op without a board
     target_dt = 0.02  # 50 fps, real-time (20 sim steps of 1 ms per frame)
     n_sub = int(round(target_dt / engine.dt))
@@ -194,9 +194,14 @@ if os.path.exists(static_path):
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
+        # Do not serve index.html for missing API or WS routes
+        if full_path.startswith("api") or full_path.startswith("ws"):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404)
+
         # Serve favicon or other root files if they exist
         file_path = os.path.join(static_path, full_path)
-        if os.path.isfile(file_path) and not full_path.startswith("api"):
+        if os.path.isfile(file_path):
             return FileResponse(file_path)
         # Fallback to index.html for SPA routing
         return FileResponse(os.path.join(static_path, "index.html"))

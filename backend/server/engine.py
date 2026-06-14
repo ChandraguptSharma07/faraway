@@ -69,9 +69,9 @@ class Engine:
         self.gust_decay = float(np.exp(-dt / 0.18))  # ~0.18 s gust time-constant
 
         # Settle the start-up transient before streaming. The collector-head mode is
-        # lightly damped (decay ~1.4 s), so we warm up ~3 s and then clear the rolling
+        # lightly damped (decay ~1.4 s), so we warm up ~0.5 s and then clear the rolling
         # metric windows, so the baseline stats start at the true steady state.
-        self.step(int(3.0 / dt))
+        self.step(int(0.5 / dt))
         self.fwin_p.clear()
         self.fwin_a.clear()
 
