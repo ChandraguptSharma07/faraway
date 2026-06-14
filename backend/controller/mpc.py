@@ -11,6 +11,8 @@ aerodynamic force), emulating an active actuator.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 
 from backend.pinn.data import _wire_features
@@ -47,6 +49,7 @@ class PINNMPCController:
         self._last_fc = 0.0
         self._last_t = -1e9
         self._held = 0.0
+        self.last_latency_ms = 0.0  # inference time of the most recent re-optimisation
 
     def __call__(self, t: float, state, force: float) -> float:
         # Receding-horizon: only re-optimise every control_period; hold otherwise.
@@ -56,7 +59,9 @@ class PINNMPCController:
 
         fa = self.dist.aero_force(self.speed_ms, self.beyond)
         wf = _wire_features(self.dist, t, self.speed_ms, self.beyond)
+        t0 = time.perf_counter()
         pred_force = self.pred.predict_force_candidates(state, self.candidates, fa, wf)
+        self.last_latency_ms = 1e3 * (time.perf_counter() - t0)
 
         cost = (
             (pred_force - self.setpoint) ** 2
