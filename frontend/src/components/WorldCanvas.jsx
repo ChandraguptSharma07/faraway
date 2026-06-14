@@ -8,9 +8,17 @@ import { useEffect, useRef } from 'react'
 
 const ACCENT = '#2ee6d6'
 const ARC = '#ff3b3b'
-const PX_PER_MM = 2.4          // displacement magnification
+const PX_PER_MM = 2.4          // gross wire-undulation magnification (shared span bob)
 const SPAN_M = 60              // physics span length
 const SPAN_PX = 240            // pixels per span on screen
+
+// Force-driven contact-wire lift: the flexible wire is pulled up by the pantograph
+// by uplift = contact_force / catenary_stiffness (our EN 50318 "max uplift" metric,
+// sent as sys.uplift_mm). This is the per-system signal that actually differs.
+const UPLIFT_SCALE = 0.85      // px per mm of catenary uplift
+const UPLIFT_MAX_PX = 65       // clamp so the lift never reaches the messenger wire
+const TENT_HALF_W = 56         // px half-width of the local wire lift under the head
+const LOSS_GAP_PX = 13         // head<->wire separation drawn on contact loss
 
 export default function WorldCanvas({ frameRef, prefersReducedMotion }) {
   const canvasRef = useRef(null)
@@ -83,6 +91,22 @@ function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced) {
   }
 
   const wireMm = frame ? frame.wire_mm : 0
+  const lost = sys ? sys.contact_lost : false
+
+  // Per-system contact-force lift (the discriminating signal). Collapses to 0 on loss.
+  const upliftMm = sys ? (sys.uplift_mm ?? 0) : 0
+  const upliftPx = lost ? 0 : Math.min(upliftMm * UPLIFT_SCALE, UPLIFT_MAX_PX)
+
+  // Gross wire position at the train (span undulation; shared by both lanes -> both
+  // heads bob together, which is real) and the lifted contact apex the head rides.
+  const contactNominalY = wireBaseY - wireMm * PX_PER_MM
+  const apexY = contactNominalY - upliftPx
+
+  // raised-cosine blend that tents the wire up to the apex near the contact point
+  const tent = (sx) => {
+    const d = Math.abs(sx - contactX)
+    return d >= TENT_HALF_W ? 0 : 0.5 * (1 + Math.cos((Math.PI * d) / TENT_HALF_W))
+  }
 
   // --- catenary: messenger wire, poles, droppers, contact wire (scrolling) ---
   const messengerY = y0 + H * 0.16
@@ -93,16 +117,18 @@ function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced) {
   ctx.strokeStyle = 'rgba(120,140,160,0.35)'
   ctx.beginPath(); ctx.moveTo(0, messengerY); ctx.lineTo(W, messengerY); ctx.stroke()
 
-  // contact wire with mid-span sag + live micro-undulation near contact
-  ctx.strokeStyle = 'rgba(150,170,190,0.55)'
+  // contact wire: mid-span sag, blended near the pantograph toward the lifted apex
+  // (the wire is physically pulled up by the contact force). Brighter under load.
+  ctx.strokeStyle = lost ? 'rgba(255,90,90,0.7)' : 'rgba(150,170,190,0.55)'
   ctx.beginPath()
-  for (let x = -SPAN_PX; x <= W + SPAN_PX; x += 6) {
+  for (let x = -SPAN_PX; x <= W + SPAN_PX; x += 5) {
     const sx = x - scroll
-    const phase = ((x) % SPAN_PX) / SPAN_PX // 0..1 within span
+    const phase = ((x % SPAN_PX) + SPAN_PX) % SPAN_PX / SPAN_PX // 0..1 within span
     const sag = Math.sin(phase * Math.PI) * 10 // sag mid-span, taut at poles
-    let yy = wireBaseY + sag
-    if (Math.abs(sx - contactX) < 3) yy = wireBaseY - wireMm * PX_PER_MM
-    if (sx === -SPAN_PX) ctx.moveTo(sx, yy); else ctx.lineTo(sx, yy)
+    const base = wireBaseY + sag
+    const b = tent(sx)
+    const yy = base * (1 - b) + apexY * b // pull wire up to the apex under the head
+    if (x === -SPAN_PX) ctx.moveTo(sx, yy); else ctx.lineTo(sx, yy)
   }
   ctx.stroke()
 
@@ -134,11 +160,10 @@ function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced) {
   ctx.beginPath(); ctx.moveTo(0, railY); ctx.lineTo(W, railY); ctx.stroke()
 
   // --- train + pantograph ---
-  const headMm = sys ? sys.head_mm : 0
-  const lost = sys ? sys.contact_lost : false
+  // In contact the head sits at the lifted wire apex; on loss it has fallen below the
+  // wire (the wire snaps back to nominal) and an arc bridges the gap.
   const roofY = railY - H * 0.30
-  const headY = wireBaseY - headMm * PX_PER_MM
-  const wireY = wireBaseY - wireMm * PX_PER_MM
+  const headY = lost ? contactNominalY + LOSS_GAP_PX : apexY
 
   drawTrain(ctx, contactX, railY, H)
   drawPantograph(ctx, contactX, roofY, Math.min(headY, roofY - 6))
@@ -146,22 +171,23 @@ function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced) {
   // --- contact node + arc ---
   const nodeColor = lost ? ARC : ACCENT
   if (lost) {
-    drawArc(ctx, contactX, headY, wireY, reduced)
-    // red flash halo
+    drawArc(ctx, contactX, headY, contactNominalY, reduced)
+    // red flash halo at the wire where contact tore away
     ctx.save()
-    const g = ctx.createRadialGradient(contactX, wireY, 0, contactX, wireY, 46)
+    const g = ctx.createRadialGradient(contactX, contactNominalY, 0, contactX, contactNominalY, 46)
     g.addColorStop(0, 'rgba(255,59,59,0.5)')
     g.addColorStop(1, 'rgba(255,59,59,0)')
     ctx.fillStyle = g
-    ctx.beginPath(); ctx.arc(contactX, wireY, 46, 0, Math.PI * 2); ctx.fill()
+    ctx.beginPath(); ctx.arc(contactX, contactNominalY, 46, 0, Math.PI * 2); ctx.fill()
     ctx.restore()
   }
-  // glowing node at the contact point
+  // glowing node at the contact point (radius grows subtly with contact load)
   ctx.save()
   ctx.shadowColor = nodeColor
-  ctx.shadowBlur = lost ? 22 : 16
+  ctx.shadowBlur = lost ? 22 : 14 + upliftPx * 0.12
   ctx.fillStyle = nodeColor
-  ctx.beginPath(); ctx.arc(contactX, lost ? headY : wireY, lost ? 4.5 : 5.5, 0, Math.PI * 2); ctx.fill()
+  const nodeR = lost ? 4.5 : 4.5 + upliftPx * 0.03
+  ctx.beginPath(); ctx.arc(contactX, headY, nodeR, 0, Math.PI * 2); ctx.fill()
   ctx.restore()
 
   // --- label + live force chip ---
