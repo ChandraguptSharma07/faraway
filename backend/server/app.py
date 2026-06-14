@@ -10,6 +10,7 @@ Run:  python -m uvicorn backend.server.app:app --port 8000
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -25,8 +26,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Lazy singletons for the (CPU-heavy to construct) predictor-backed views.
+# Lazy singletons + caches for the (CPU-heavy) credibility views. These are
+# deterministic, so we compute once and reuse — the panel then opens instantly.
 _predictor = None
+_validation_cache = None
+_overlay_cache: dict[float, dict] = {}
 
 
 def get_predictor():
@@ -37,14 +41,28 @@ def get_predictor():
     return _predictor
 
 
+@app.on_event("startup")
+def _warm_caches():
+    """Precompute the credibility views in a background thread so /health is up
+    immediately and the panel is ready by the time the operator opens it."""
+    def work():
+        try:
+            _compute_validation()
+            _compute_overlay(300.0)
+        except Exception:
+            pass
+    threading.Thread(target=work, daemon=True).start()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "aeropinn"}
 
 
-@app.get("/api/validation")
-def validation():
-    """EN 50318 validation table for the credibility view."""
+def _compute_validation():
+    global _validation_cache
+    if _validation_cache is not None:
+        return _validation_cache
     from backend.sim.parameters import kmh_to_ms
     from backend.sim.solver import metrics, simulate
     from backend.sim.validate import EN50318, _in_range
@@ -61,22 +79,22 @@ def validation():
                 "pass": _in_range(m[key], lo, hi),
             })
         out[str(speed)] = {"rows": rows, "solver_step_ms": round(m["step_wall_ms"], 4)}
+    _validation_cache = out
     return out
 
 
-@app.get("/api/overlay")
-def overlay(speed_kmh: float = 300.0):
-    """PINN-predicted vs classical-solver contact force + timing (credibility view)."""
+def _compute_overlay(speed_kmh: float):
+    if speed_kmh in _overlay_cache:
+        return _overlay_cache[speed_kmh]
     from backend.pinn.predict import rollout_overlay
     from backend.sim.parameters import kmh_to_ms
     from backend.sim.solver import simulate
 
     pred = get_predictor()
-    ov = rollout_overlay(pred, speed_kmh=speed_kmh, duration=2.0)
+    ov = rollout_overlay(pred, speed_kmh=speed_kmh, duration=1.5, sample_dt=4.0e-3)
     lat = pred.benchmark_latency()
-    # classical solver per-step wall time at this speed
-    res = simulate(kmh_to_ms(speed_kmh), duration=2.0)
-    return {
+    res = simulate(kmh_to_ms(speed_kmh), duration=1.5)
+    out = {
         "speed_kmh": speed_kmh,
         "t": [round(float(x), 4) for x in ov["t"]],
         "f_pinn": [round(float(x), 2) for x in ov["f_pinn"]],
@@ -85,7 +103,22 @@ def overlay(speed_kmh: float = 300.0):
         "pinn_latency_ms": round(lat["latency_ms_batch"], 4),
         "pinn_latency_ms_single": round(lat["latency_ms_single"], 4),
         "solver_step_ms": round(res.step_wall_ms, 4),
+        "horizon_ms": round(ov["horizon_ms"], 1),
     }
+    _overlay_cache[speed_kmh] = out
+    return out
+
+
+@app.get("/api/validation")
+def validation():
+    """EN 50318 validation table for the credibility view (cached)."""
+    return _compute_validation()
+
+
+@app.get("/api/overlay")
+def overlay(speed_kmh: float = 300.0):
+    """PINN-predicted vs classical-solver contact force + timing (cached)."""
+    return _compute_overlay(speed_kmh)
 
 
 def _handle_input(engine: Engine, msg: dict):
