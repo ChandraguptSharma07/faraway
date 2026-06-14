@@ -30,8 +30,8 @@ class PINNMPCController:
         beyond: BeyondEnvelope,
         setpoint: float = 115.0,
         f_max: float = 90.0,
-        n_candidates: int = 41,
-        control_period: float = 2.0e-3,
+        n_candidates: int = 21,
+        control_period: float = 4.0e-3,
         w_effort: float = 1.0e-4,
         w_rate: float = 5.0e-4,
     ):

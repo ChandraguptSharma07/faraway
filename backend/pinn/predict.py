@@ -45,7 +45,9 @@ class PINNPredictor:
         self.model = model or load_model()
         self.panto = panto or PantographParams()
         self.H = self.model.cfg.horizon
-        torch.set_num_threads(max(1, torch.get_num_threads()))
+        # Crucial for constrained PaaS (Render free tier): limit PyTorch to 1 thread 
+        # to avoid severe CPU thrashing on shared virtual cores.
+        torch.set_num_threads(1)
 
     @torch.no_grad()
     def predict_force_candidates(

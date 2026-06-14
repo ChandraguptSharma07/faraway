@@ -154,7 +154,7 @@ async def ws(ws: WebSocket):
     # Run the initial warm-up in a thread so we don't block other connections/health checks
     engine = await asyncio.to_thread(Engine, predictor=get_predictor())
     servo = get_servo()  # optional; no-op without a board
-    target_dt = 0.02  # 50 fps, real-time (20 sim steps of 1 ms per frame)
+    target_dt = 0.033  # ~30 fps, eased for Render CPU limits (33 sim steps of 1 ms per frame)
     n_sub = int(round(target_dt / engine.dt))
     stop = asyncio.Event()
 
