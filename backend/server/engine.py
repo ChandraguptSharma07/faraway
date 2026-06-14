@@ -147,6 +147,10 @@ class Engine:
             "gust_active": bool(self.rp.gust != 0.0),
             "wire_mm": round(1e3 * yw, 3),
             "setpoint_N": self.setpoint,
+            # EN 50318 model terms exposed for the world-view physics overlay
+            "kc": self.panto.kc,
+            "f0_N": round(self.panto.F0, 1),
+            "aero_N": round(self.dist.aero_force(speed_ms, beyond), 1),
             "passive": {
                 "head_mm": round(1e3 * float(self.state_p[0]), 3),
                 "contact_force": round(self.force_p, 2),
