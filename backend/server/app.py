@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+import traceback
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -158,7 +159,11 @@ async def ws(ws: WebSocket):
             while not stop.is_set():
                 msg = await ws.receive_json()
                 _handle_input(engine, msg)
-        except (WebSocketDisconnect, Exception):
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            traceback.print_exc()
+        finally:
             stop.set()
 
     async def streamer():
@@ -169,7 +174,11 @@ async def ws(ws: WebSocket):
                 servo.send(engine.f_control)  # twitch the servo in sync (if present)
                 await ws.send_json(engine.frame())
                 await asyncio.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
-        except (WebSocketDisconnect, Exception):
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            traceback.print_exc()
+        finally:
             stop.set()
 
     await asyncio.gather(receiver(), streamer())

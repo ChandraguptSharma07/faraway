@@ -66,7 +66,7 @@ class Engine:
         self.force_a = 0.0
         self.f_control = 0.0
         self.latency_ms = 0.0
-        self.gust_decay = np.exp(-dt / 0.18)  # ~0.18 s gust time-constant
+        self.gust_decay = float(np.exp(-dt / 0.18))  # ~0.18 s gust time-constant
 
         # Settle the start-up transient before streaming. The collector-head mode is
         # lightly damped (decay ~1.4 s), so we warm up ~3 s and then clear the rolling
@@ -143,7 +143,7 @@ class Engine:
             "speed_kmh": round(self.rp.speed_kmh, 1),
             "tension_factor": round(self.rp.tension_factor, 3),
             "turbulence_gain": round(self.rp.turbulence_gain, 3),
-            "gust_active": self.rp.gust != 0.0,
+            "gust_active": bool(self.rp.gust != 0.0),
             "wire_mm": round(1e3 * yw, 3),
             "setpoint_N": self.setpoint,
             "passive": {
