@@ -31,6 +31,7 @@ app.add_middleware(
 _predictor = None
 _validation_cache = None
 _overlay_cache: dict[float, dict] = {}
+_servo = None
 
 
 def get_predictor():
@@ -39,6 +40,15 @@ def get_predictor():
         from backend.pinn.predict import PINNPredictor
         _predictor = PINNPredictor()
     return _predictor
+
+
+def get_servo():
+    """Optional hardware servo link (auto-detected; no-op if no board)."""
+    global _servo
+    if _servo is None:
+        from backend.server.servo import ServoLink
+        _servo = ServoLink()
+    return _servo
 
 
 @app.on_event("startup")
@@ -56,7 +66,7 @@ def _warm_caches():
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "aeropinn"}
+    return {"status": "ok", "service": "aeropinn", **get_servo().status()}
 
 
 def _compute_validation():
@@ -138,6 +148,7 @@ def _handle_input(engine: Engine, msg: dict):
 async def ws(ws: WebSocket):
     await ws.accept()
     engine = Engine()
+    servo = get_servo()  # optional; no-op without a board
     target_dt = 0.02  # 50 fps, real-time (20 sim steps of 1 ms per frame)
     n_sub = int(round(target_dt / engine.dt))
     stop = asyncio.Event()
@@ -155,6 +166,7 @@ async def ws(ws: WebSocket):
             while not stop.is_set():
                 t0 = time.perf_counter()
                 engine.step(n_sub)
+                servo.send(engine.f_control)  # twitch the servo in sync (if present)
                 await ws.send_json(engine.frame())
                 await asyncio.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
         except (WebSocketDisconnect, Exception):
