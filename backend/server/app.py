@@ -151,7 +151,8 @@ def _handle_input(engine: Engine, msg: dict):
 @app.websocket("/ws")
 async def ws(ws: WebSocket):
     await ws.accept()
-    engine = Engine(predictor=get_predictor())
+    # Run the initial warm-up in a thread so we don't block other connections/health checks
+    engine = await asyncio.to_thread(Engine, predictor=get_predictor())
     servo = get_servo()  # optional; no-op without a board
     target_dt = 0.02  # 50 fps, real-time (20 sim steps of 1 ms per frame)
     n_sub = int(round(target_dt / engine.dt))
@@ -173,7 +174,8 @@ async def ws(ws: WebSocket):
         try:
             while not stop.is_set():
                 t0 = time.perf_counter()
-                engine.step(n_sub)
+                # Run the heavy simulation step in a background thread
+                await asyncio.to_thread(engine.step, n_sub)
                 servo.send(engine.f_control)  # twitch the servo in sync (if present)
                 await ws.send_json(engine.frame())
                 await asyncio.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
