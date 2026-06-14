@@ -11,6 +11,7 @@ export default function App() {
   const { frameRef, historyRef, connected, send } = useTelemetry()
   const [showCred, setShowCred] = useState(false)
   const [reduced, setReduced] = useState(false)
+  const [showPhysics, setShowPhysics] = useState(true)
 
   useEffect(() => {
     const m = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -39,7 +40,14 @@ export default function App() {
       </header>
 
       <section className="world-zone">
-        <WorldCanvas frameRef={frameRef} prefersReducedMotion={reduced} />
+        <WorldCanvas frameRef={frameRef} prefersReducedMotion={reduced} showPhysics={showPhysics} />
+        <button
+          className={`physics-toggle ${showPhysics ? 'on' : ''}`}
+          onClick={() => setShowPhysics((v) => !v)}
+          title="Overlay the equations, forces and dimensions on the world view"
+        >
+          PHYSICS {showPhysics ? 'ON' : 'OFF'}
+        </button>
         {!connected && (
           <div className="world-offline mono">
             connecting to backend on :8000…
