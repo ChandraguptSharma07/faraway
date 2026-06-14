@@ -86,6 +86,25 @@ auto-detects the serial port and twitches the servo in sync with the control com
 > **Runs fully without hardware.** If no board is connected, the entire software demo runs
 > normally — the servo is purely additive and never a dependency.
 
+## Validation & development
+
+```bash
+# EN 50318 validation gate (prints the comparison table at 250 & 300 km/h)
+python -m backend.sim.validate
+
+# passive vs AeroPINN comparison (headline metrics across scenarios)
+python -m backend.controller.compare
+
+# tests (solver validation, PINN latency, controller beats passive)
+python -m pytest backend/tests -q
+
+# retrain the PINN (a trained model is committed at backend/pinn/pinn_model.pt; ~3 min CPU)
+python -m backend.pinn.train
+```
+
+The trained model (`backend/pinn/pinn_model.pt`, ~40 KB) is committed so the demo runs
+out of the box; the command above regenerates it.
+
 ## Requirements
 
 Python ≥ 3.10, Node ≥ 18. Developed on Python 3.14 / Node 24. CPU-only — no CUDA/GPU
