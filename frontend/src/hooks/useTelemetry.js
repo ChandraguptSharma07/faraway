@@ -17,7 +17,9 @@ export function useThrottledFrame(frameRef, hz = 12) {
   return frame
 }
 
-const WS_URL = 'ws://127.0.0.1:8000/ws'
+const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+const host = window.location.host === 'localhost:5173' ? '127.0.0.1:8000' : window.location.host
+const WS_URL = `${protocol}//${host}/ws`
 const MAX_POINTS = 600 // ~12 s of history at 50 fps
 
 // Live telemetry channel. Latest frame and rolling history live in refs so the

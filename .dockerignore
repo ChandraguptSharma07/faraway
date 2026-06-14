@@ -1,0 +1,14 @@
+.git
+.gitignore
+node_modules
+dist
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+hardware
+self_notes
+backend/tests
+README.md
+render.yaml

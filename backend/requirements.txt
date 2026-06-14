@@ -6,7 +6,7 @@
 # (torch is listed here for reference but should come from the CPU index above
 #  to avoid pulling a large CUDA build.)
 
-torch>=2.9        # CPU build — see note above
+torch>=2.5        # CPU build — see note above
 numpy>=2.0
 scipy>=1.13
 fastapi>=0.115

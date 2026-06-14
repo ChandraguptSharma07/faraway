@@ -1,4 +1,6 @@
-const BASE = 'http://127.0.0.1:8000'
+const BASE = window.location.origin === 'http://localhost:5173' 
+  ? 'http://127.0.0.1:8000' 
+  : window.location.origin
 
 export async function fetchValidation() {
   const r = await fetch(`${BASE}/api/validation`)

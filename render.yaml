@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: aeropinn
+    env: docker
+    plan: free
+    region: ohio
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 10000

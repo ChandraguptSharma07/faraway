@@ -14,8 +14,11 @@ import threading
 import time
 import traceback
 
+import os
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from backend.server.engine import Engine
 
@@ -182,3 +185,18 @@ async def ws(ws: WebSocket):
             stop.set()
 
     await asyncio.gather(receiver(), streamer())
+
+
+# Serve static files from the frontend/dist directory if it exists
+static_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend", "dist")
+if os.path.exists(static_path):
+    app.mount("/assets", StaticFiles(directory=os.path.join(static_path, "assets")), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Serve favicon or other root files if they exist
+        file_path = os.path.join(static_path, full_path)
+        if os.path.isfile(file_path) and not full_path.startswith("api"):
+            return FileResponse(file_path)
+        # Fallback to index.html for SPA routing
+        return FileResponse(os.path.join(static_path, "index.html"))
