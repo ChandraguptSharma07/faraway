@@ -72,6 +72,47 @@ class Disturbance:
         """Total effective wire vertical trajectory the head follows."""
         return self.y_span(t, speed_ms, beyond) + self.y_turb(t, beyond)
 
+    def wire_kinematics(
+        self,
+        t: float,
+        speed_ms: float,
+        beyond: BeyondEnvelope,
+    ) -> tuple[float, float]:
+        """Scalar wire displacement and its exact time derivative.
+
+        The coupled solver needs both values at every force evaluation. Computing
+        them together avoids repeating the turbulence sum and removes the finite-
+        difference approximation previously used for wire velocity.
+        """
+        x = speed_ms * float(t) + self._x0
+        tension = max(beyond.tension_factor, 1.0e-3)
+        amp = self.cat.a_span / tension
+        amp2 = self.cat.a_span2 / tension
+        span_omega = 2.0 * np.pi * speed_ms / self.cat.span_length
+        arg = 2.0 * np.pi * x / self.cat.span_length
+        span = amp * np.cos(arg) + amp2 * np.cos(2.0 * arg)
+        span_velocity = (
+            -amp * span_omega * np.sin(arg)
+            - 2.0 * amp2 * span_omega * np.sin(2.0 * arg)
+        )
+
+        phases = self._turb_omega * float(t) + self._turb_phase
+        gain = beyond.turbulence_gain
+        turbulence = self._turb_amp * np.sin(phases).sum() * gain
+        turbulence_velocity = (
+            self._turb_amp * (self._turb_omega * np.cos(phases)).sum() * gain
+        )
+        return float(span + turbulence), float(span_velocity + turbulence_velocity)
+
+    def wire_velocity(
+        self,
+        t: float,
+        speed_ms: float,
+        beyond: BeyondEnvelope,
+    ) -> float:
+        """Exact scalar time derivative of :meth:`y_wire`."""
+        return self.wire_kinematics(t, speed_ms, beyond)[1]
+
     def aero_force(self, speed_ms: float, beyond: BeyondEnvelope) -> float:
         """Aerodynamic uplift force on the head (N): c_aero * v^2 (+ transient gust)."""
         return self.cat.c_aero * speed_ms * speed_ms + beyond.gust

@@ -465,6 +465,10 @@ class JourneySession:
             "aeropinn": {"mean": 0.0, "m2": 0.0, "loss": 0, "min": None, "max": None},
         }
         self._previous_flags: dict[str, bool] = {}
+        self._saturation_candidate: bool | None = None
+        self._saturation_candidate_since: float | None = None
+        self._control_samples = 0
+        self._saturated_samples = 0
         self._closed = False
 
     def record(self, frame: dict) -> dict:
@@ -521,6 +525,11 @@ class JourneySession:
         }
         self._write_record(record)
         self.physics_count += 1
+        self._control_samples += 1
+        self._saturated_samples += int(
+            abs(float(sample["aeropinn"]["command_force_N"]))
+            >= float(sample["timing"]["control_authority_N"])
+        )
         self._update_force_stats(
             float(sample["passive"]["contact_force_N"]),
             float(sample["aeropinn"]["contact_force_N"]),
@@ -593,7 +602,6 @@ class JourneySession:
             "AEROPINN_CONTACT_LOSS": bool(sample["aeropinn_lost"]),
             "GUST": bool(sample["gust_active"]),
             "ESTIMATOR_FALLBACK": bool(sample["fallback"]),
-            "ACTUATOR_SATURATION": abs(float(sample["command_N"])) >= float(sample["authority_N"]),
         }
         for name, active in flags.items():
             previous = self._previous_flags.get(name, False)
@@ -602,6 +610,44 @@ class JourneySession:
                     "simulation_t_s": sample["t"], "location": location
                 })
             self._previous_flags[name] = active
+        self._detect_saturation(sample, location)
+
+    def _detect_saturation(self, sample: dict, location: dict) -> None:
+        """Debounce actuator-limit events while retaining raw duty-cycle evidence."""
+        name = "ACTUATOR_SATURATION"
+        active = self._previous_flags.get(name, False)
+        command = abs(float(sample["command_N"]))
+        authority = max(float(sample["authority_N"]), 1.0e-9)
+        threshold_crossed = (
+            command <= 0.90 * authority if active else command >= 0.98 * authority
+        )
+        desired = not active
+        simulation_t = float(sample["t"])
+
+        if not threshold_crossed:
+            self._saturation_candidate = None
+            self._saturation_candidate_since = None
+            return
+        if self._saturation_candidate != desired:
+            self._saturation_candidate = desired
+            self._saturation_candidate_since = simulation_t
+            return
+        if (
+            self._saturation_candidate_since is None
+            or simulation_t - self._saturation_candidate_since < 0.10
+        ):
+            return
+
+        self.event(f"{name}_{'START' if desired else 'END'}", {
+            "simulation_t_s": sample["t"],
+            "location": location,
+            "dwell_s": round(simulation_t - self._saturation_candidate_since, 3),
+            "enter_threshold_pct": 98.0,
+            "exit_threshold_pct": 90.0,
+        })
+        self._previous_flags[name] = desired
+        self._saturation_candidate = None
+        self._saturation_candidate_since = None
 
     def event(self, event_type: str, details: dict | None = None) -> None:
         if self._closed:
@@ -637,6 +683,13 @@ class JourneySession:
             "sample_streams": {
                 "physics_audit_1khz": self.physics_count,
                 "dashboard_frame_30hz": self.frame_count,
+            },
+            "controller": {
+                "command_limit_samples": self._saturated_samples,
+                "command_limit_duty_pct": round(
+                    100.0 * self._saturated_samples / max(self._control_samples, 1),
+                    3,
+                ),
             },
             "lanes": lanes,
         }

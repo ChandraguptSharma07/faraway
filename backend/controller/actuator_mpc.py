@@ -49,6 +49,7 @@ class ActuatorAwarePINNMPC:
         force_resolution: float = 0.10,
         force_bias_time_constant: float = 0.25,
         force_bias_limit: float = 10.0,
+        force_bias_command_gain: float = 0.5,
     ):
         self.pred = predictor
         self.actuator = actuator
@@ -73,7 +74,11 @@ class ActuatorAwarePINNMPC:
         self.w_wave_velocity = w_wave_velocity
         if force_resolution <= 0.0:
             raise ValueError("force_resolution must be positive")
-        if force_bias_time_constant <= 0.0 or force_bias_limit < 0.0:
+        if (
+            force_bias_time_constant <= 0.0
+            or force_bias_limit < 0.0
+            or force_bias_command_gain < 0.0
+        ):
             raise ValueError("force-bias dynamics must be positive and bounded")
         tracking_weight_sum = sum(
             0.5 + (step + 1) / rollout_steps
@@ -84,6 +89,7 @@ class ActuatorAwarePINNMPC:
             -self.control_period / force_bias_time_constant
         )
         self.force_bias_limit = float(force_bias_limit)
+        self.force_bias_command_gain = float(force_bias_command_gain)
         self.force_bias_correction = 0.0
         self._last_command = 0.0
         self._scheduler = PeriodicScheduler(self.control_period)
@@ -196,7 +202,15 @@ class ActuatorAwarePINNMPC:
             self.cost_tie_tolerance,
             self._last_command,
         )
-        best = float(self.candidates[best_index])
+        # A small offset-free command trim closes the steady-state gap between the
+        # reduced PINN rollout and the coupled plant. It uses only the filtered
+        # estimated-force error and remains inside the identified command authority.
+        best = float(np.clip(
+            self.candidates[best_index]
+            + self.force_bias_command_gain * self.force_bias_correction,
+            -self.command_limit,
+            self.command_limit,
+        ))
         self.last_latency_ms = 1e3 * (time.perf_counter() - started)
         self._latencies.append(self.last_latency_ms)
         self._deadline_misses.append(

@@ -53,10 +53,10 @@ def deriv(
     pneumatic active-pantograph experiments (0 for passive).
     """
     z1, z1d, z2, z2d = state
-    yw = float(dist.y_wire(t, speed_ms, beyond))
     if hasattr(dist, "contact_force"):
         p = dist.contact_force(t, speed_ms, beyond, z1, z1d, panto.kc)
     else:
+        yw = float(dist.y_wire(t, speed_ms, beyond))
         p = _contact_force(yw, z1, panto.kc)
     fa = dist.aero_force(speed_ms, beyond)
 

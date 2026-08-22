@@ -171,6 +171,8 @@ class Engine:
         self.estimated_contact_force = self.setpoint
         self.estimator_fallback = True
         self.estimator_reason = "ESTIMATOR_STARTING"
+        self.controller_enabled = False
+        self.controller_reason = "ESTIMATOR_STARTING"
         self.gust_decay = float(np.exp(-dt / 0.18))  # ~0.18 s gust time-constant
 
         # Settle the start-up transient before streaming. The collector-head mode is
@@ -201,6 +203,14 @@ class Engine:
 
     def trigger_gust(self, magnitude: float = 70.0):
         self.rp.gust = float(magnitude)
+
+    def _controller_within_training_support(self) -> bool:
+        """Conservative boundary of the scenarios represented in PINN training."""
+        return (
+            self.rp.speed_kmh <= 360.0
+            and self.rp.tension_factor >= 0.5
+            and self.rp.turbulence_gain <= 3.5
+        )
 
     def _sync_catenary_tension(self):
         factor = round(self.rp.tension_factor, 2)
@@ -274,8 +284,9 @@ class Engine:
             if abs(updated - force) < 0.05:
                 force = updated
                 break
-            # Under-relaxation stabilizes contact opening/closing iterations.
-            force = 0.45 * updated + 0.55 * force
+            # The coupled map is contractive over the tested operating matrix;
+            # accepting the update directly converges faster than under-relaxing it.
+            force = updated
         environment.ripple_override = None
         environment.ripple_velocity_override = None
         # Recompute the preview at the accepted force before committing the wire.
@@ -343,7 +354,10 @@ class Engine:
             )
             estimator_healthy, self.estimator_reason = self.observer.health(self.t)
             self.estimator_fallback = not estimator_healthy
-            if estimator_healthy:
+            within_support = self._controller_within_training_support()
+            self.controller_enabled = estimator_healthy and within_support
+            if self.controller_enabled:
+                self.controller_reason = "ACTIVE"
                 self.f_command = self.controller(
                     self.t,
                     self.observer.state.copy(),
@@ -353,6 +367,11 @@ class Engine:
                 # Removing active force is the fail-safe behavior of this simulation;
                 # real hardware still needs a safety case and independent interlock.
                 self.f_command = 0.0
+                self.controller_reason = (
+                    self.estimator_reason
+                    if not estimator_healthy
+                    else "OUTSIDE_PINN_TRAINING_SUPPORT"
+                )
             self.f_control = self.actuator.step(self.f_command)
             self.f_actuator_estimate = self.actuator_estimate.step(self.f_command)
             self.latency_ms = self.controller.last_latency_ms
@@ -449,6 +468,12 @@ class Engine:
                 "pinn_latency_ms": float(self.latency_ms),
                 "control_period_ms": 1.0e3 * self.controller.control_period,
                 "control_authority_N": self.controller.command_limit,
+                "controller_enabled": self.controller_enabled,
+                "controller_reason": self.controller_reason,
+                "force_bias_command_trim_N": (
+                    self.controller.force_bias_command_gain
+                    * self.controller.force_bias_correction
+                ),
             },
             "sensors": {
                 "sample_count": self.sensors.sample_count,
@@ -545,6 +570,13 @@ class Engine:
                 "force_bias_correction_N": round(
                     self.controller.force_bias_correction, 3
                 ),
+                "force_bias_command_trim_N": round(
+                    self.controller.force_bias_command_gain
+                    * self.controller.force_bias_correction,
+                    3,
+                ),
+                "controller_enabled": self.controller_enabled,
+                "controller_reason": self.controller_reason,
             },
             "state_estimation": {
                 **observer,

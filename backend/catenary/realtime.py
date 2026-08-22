@@ -351,11 +351,7 @@ class CoupledWireEnvironment:
         return self.base.aero_force(speed_ms, beyond)
 
     def wire_velocity(self, t, speed_ms: float, beyond: BeyondEnvelope) -> float:
-        d = 1.0e-4
-        base_velocity = (
-            float(self.base.y_wire(t + d, speed_ms, beyond))
-            - float(self.base.y_wire(t - d, speed_ms, beyond))
-        ) / (2.0 * d)
+        base_velocity = self.base.wire_velocity(t, speed_ms, beyond)
         ripple_velocity = (
             self.wire.contact_velocity()
             if self.ripple_velocity_override is None
@@ -372,8 +368,21 @@ class CoupledWireEnvironment:
         head_velocity: float,
         contact_stiffness: float,
     ) -> float:
-        gap = head_position - float(self.y_wire(t, speed_ms, beyond))
-        relative_velocity = head_velocity - self.wire_velocity(t, speed_ms, beyond)
+        base_position, base_velocity = self.base.wire_kinematics(
+            t, speed_ms, beyond
+        )
+        ripple = (
+            self.wire.contact_displacement()
+            if self.ripple_override is None
+            else self.ripple_override
+        )
+        ripple_velocity = (
+            self.wire.contact_velocity()
+            if self.ripple_velocity_override is None
+            else self.ripple_velocity_override
+        )
+        gap = head_position - (base_position + ripple)
+        relative_velocity = head_velocity - (base_velocity + ripple_velocity)
         force = (
             contact_stiffness * gap
             + self.wire.model.params.contact_damping * relative_velocity

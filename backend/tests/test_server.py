@@ -49,6 +49,34 @@ def test_engine_emits_one_native_rate_audit_sample_per_step():
     assert samples[-1]["timing"]["control_authority_N"] == 25.0
 
 
+def test_controller_fails_safe_outside_pinn_training_support():
+    engine = Engine()
+    engine.set_tension(0.4)
+    engine.set_turbulence(4.0)
+    engine.step(100)
+
+    assert engine.f_command == 0.0
+    assert engine.controller_enabled is False
+    assert engine.controller_reason == "OUTSIDE_PINN_TRAINING_SUPPORT"
+    assert engine.frame()["control_timing"]["controller_enabled"] is False
+
+
+def test_direct_catenary_coupling_converges_within_force_tolerance():
+    engine = Engine(seed=999)
+    engine.set_speed(350.0)
+    engine.set_tension(0.5)
+    engine.set_turbulence(3.5)
+    maximum_residual = 0.0
+    for _ in range(300):
+        engine.step()
+        maximum_residual = max(
+            maximum_residual,
+            engine.wire_p.last_coupling_residual,
+            engine.wire_a.last_coupling_residual,
+        )
+    assert maximum_residual < 0.05
+
+
 def test_physical_calibration_status_blocks_unsupported_claims():
     status = physical_calibration_status()
     assert status["status"] == "REFERENCE_BENCHMARK_ONLY"

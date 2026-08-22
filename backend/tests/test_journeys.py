@@ -122,3 +122,31 @@ def test_metadata_rejects_invalid_location_and_unknown_fields(tmp_path):
     with pytest.raises(ValueError, match="unsupported"):
         store.update_metadata(journey.id, {"secret_field": "value"})
     journey.finalize()
+
+
+def test_actuator_saturation_events_require_dwell_and_hysteresis(tmp_path):
+    store = JourneyStore(tmp_path)
+    journey = store.create()
+
+    # Boundary chatter is preserved in telemetry and duty statistics, but does not
+    # create a misleading series of start/end incidents.
+    for index in range(20):
+        sample = frame(index * 0.01)
+        sample["aeropinn"]["f_command"] = 25.0 if index % 2 else 24.0
+        journey.record(sample)
+    assert journey.event_count == 0
+
+    for index in range(20, 32):
+        sample = frame(index * 0.01)
+        sample["aeropinn"]["f_command"] = 25.0
+        journey.record(sample)
+    for index in range(32, 44):
+        sample = frame(index * 0.01)
+        sample["aeropinn"]["f_command"] = 20.0
+        journey.record(sample)
+    journey.finalize()
+
+    events = JourneyStore._read_ndjson(journey.events_path)
+    event_types = [event["event_type"] for event in events]
+    assert event_types.count("ACTUATOR_SATURATION_START") == 1
+    assert event_types.count("ACTUATOR_SATURATION_END") == 1

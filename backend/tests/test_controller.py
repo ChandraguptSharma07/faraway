@@ -17,6 +17,24 @@ class OneUlpPerturbedDisturbance(Disturbance):
         return np.nextafter(value, np.inf)
 
 
+def test_analytic_wire_velocity_matches_displacement_derivative():
+    disturbance = Disturbance(CatenaryParams(), seed=77)
+    beyond = BeyondEnvelope(tension_factor=0.73, turbulence_gain=2.4)
+    speed_ms = kmh_to_ms(310.0)
+    delta = 1.0e-6
+    for t in (0.0, 0.137, 1.9, 7.25):
+        finite_difference = (
+            disturbance.y_wire(t + delta, speed_ms, beyond)
+            - disturbance.y_wire(t - delta, speed_ms, beyond)
+        ) / (2.0 * delta)
+        assert np.isclose(
+            disturbance.wire_velocity(t, speed_ms, beyond),
+            finite_difference,
+            rtol=1.0e-7,
+            atol=1.0e-8,
+        )
+
+
 def test_aeropinn_flattens_force_in_validated_regime():
     pred = PINNPredictor()
     out = run_comparison(300, beyond=BeyondEnvelope(), duration=4.0, predictor=pred)
