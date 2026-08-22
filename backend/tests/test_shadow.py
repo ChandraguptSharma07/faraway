@@ -73,7 +73,10 @@ def test_service_warms_asynchronously_and_never_affects_controller():
             "controller_affected": False,
         }
 
-    service = ShadowValidationService(runner)
+    service = ShadowValidationService(
+        runner,
+        authoritative_model="distributed-v1",
+    )
     try:
         first = service.snapshot()
         assert first["mode"] == "SHADOW_ONLY"
@@ -81,6 +84,7 @@ def test_service_warms_asynchronously_and_never_affects_controller():
             row["status"] == "WARMING_UP" for row in first["scenarios"].values()
         )
         final = service.wait(timeout=1.0)
+        assert final["authoritative_model"] == "distributed-v1"
         assert all(
             row["status"] == "AGREEMENT" for row in final["scenarios"].values()
         )

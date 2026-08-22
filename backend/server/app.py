@@ -62,7 +62,10 @@ def get_modal_shadow_service():
     global _modal_shadow_service
     if _modal_shadow_service is None:
         from backend.validation.shadow import ShadowValidationService, run_modal_calibration_scenario
-        _modal_shadow_service = ShadowValidationService(runner=run_modal_calibration_scenario)
+        _modal_shadow_service = ShadowValidationService(
+            runner=run_modal_calibration_scenario,
+            authoritative_model="distributed-v1",
+        )
     return _modal_shadow_service
 
 def get_shadow_service():

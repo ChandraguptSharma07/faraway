@@ -62,9 +62,10 @@ export default function CredibilityView({ onClose }) {
         <div className="cred-body">
           
           <section className="cred-shadow">
-            <h3>LIVE MODAL MODEL · SHADOW VALIDATION</h3>
+            <h3>LIVE MODAL MODEL · CROSS-MODEL CONSISTENCY</h3>
             <p className="shadow-note">
-              Calibrating the live 36-mode catenary vs the implicit distributed reference.
+              Comparing the live 36-mode catenary with the implicit distributed reference.
+              Agreement is numerical consistency—not physical validation.
             </p>
             {modalShadow ? (
               <div className="shadow-grid">

@@ -150,7 +150,7 @@ def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) ->
     speed_ms = kmh_to_ms(speed_kmh)
     config = config or ShadowConfig()
     dist_params = replace(DistributedCatenaryParams(), n_spans=config.n_spans, elements_per_span=config.fine_elements_per_span)
-    cat = replace(CatenaryParams(), turb_std=0.0, a_span=0.012, a_span2=0.018, c_aero=0.0017)
+    cat = replace(CatenaryParams(), turb_std=0.0)
     aerodynamic_force = cat.c_aero * speed_ms * speed_ms
     
     fine_result = simulate_distributed(
@@ -242,7 +242,6 @@ def evaluate_gates(
 ) -> tuple[list[dict], list[dict]]:
     """Return explicit agreement gates and distributed EN benchmark rows."""
     thresholds = thresholds or ShadowThresholds()
-    thresholds = replace(thresholds, contact_loss_difference_pp=10.0)
     mean_delta = _relative_difference(legacy["mean_N"], distributed["mean_N"])
     std_delta = _relative_difference(legacy["std_N"], distributed["std_N"])
     loss_delta = abs(
@@ -341,15 +340,13 @@ def run_modal_calibration_scenario(
         raise ValueError(f"supported shadow speeds are {SUPPORTED_SPEEDS}")
     config = config or ShadowConfig()
     thresholds = thresholds or ShadowThresholds()
-    thresholds = replace(thresholds, contact_loss_difference_pp=10.0)
     speed_ms = kmh_to_ms(speed_kmh)
     fine_params = replace(
         DistributedCatenaryParams(),
         n_spans=config.n_spans,
         elements_per_span=config.fine_elements_per_span,
-        damping_ratio=0.05,  # 10x damping to kill startup shock fast
     )
-    cat = replace(CatenaryParams(), turb_std=0.0, a_span=0.012, a_span2=0.018, c_aero=0.0017)
+    cat = replace(CatenaryParams(), turb_std=0.0)
     aerodynamic_force = cat.c_aero * speed_ms * speed_ms
 
     started = time.perf_counter()
@@ -419,7 +416,6 @@ def run_shadow_scenario(
         DistributedCatenaryParams(),
         n_spans=config.n_spans,
         elements_per_span=config.fine_elements_per_span,
-        damping_ratio=0.05,  # 10x damping to kill startup shock fast
     )
     coarse_params = replace(
         fine_params,
@@ -428,7 +424,7 @@ def run_shadow_scenario(
 
     # Both models receive the same static uplift. Stochastic turbulence is excluded
     # because the distributed model does not yet implement an equivalent wire field.
-    legacy_cat = replace(CatenaryParams(), turb_std=0.0, a_span=0.012, a_span2=0.018, c_aero=0.0017)
+    legacy_cat = replace(CatenaryParams(), turb_std=0.0)
     aerodynamic_force = legacy_cat.c_aero * speed_ms * speed_ms
 
     started = time.perf_counter()
@@ -500,8 +496,13 @@ Runner = Callable[[int], dict]
 class ShadowValidationService:
     """One-worker cache keeps expensive shadow runs away from the live loop."""
 
-    def __init__(self, runner: Runner = run_shadow_scenario):
+    def __init__(
+        self,
+        runner: Runner = run_shadow_scenario,
+        authoritative_model: str = "legacy-reduced",
+    ):
         self._runner = runner
+        self._authoritative_model = authoritative_model
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-validation")
         self._lock = threading.Lock()
         self._futures: dict[int, Future] = {}
@@ -541,7 +542,7 @@ class ShadowValidationService:
                     }
         return {
             "mode": "SHADOW_ONLY",
-            "authoritative_model": "legacy-reduced",
+            "authoritative_model": self._authoritative_model,
             "scenarios": scenarios,
         }
 
