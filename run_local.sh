@@ -6,6 +6,10 @@ cd "$(dirname "$0")"
 echo "Initializing setup..."
 
 # 1. Setup Backend Environment
+if [ -e "/run/current-system/sw/bin/nixos-version" ]; then
+    export LD_LIBRARY_PATH="/nix/store/wxw6l8nva5rql6cdachnf9vfkwk2ihq8-ld-library-path/share/nix-ld/lib/:$LD_LIBRARY_PATH"
+fi
+
 if [ ! -d ".venv" ]; then
     echo "Creating Python virtual environment..."
     python3 -m venv .venv
