@@ -10,6 +10,7 @@ Run:  python -m uvicorn backend.server.app:app --port 8000
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import threading
 import time
 import traceback
@@ -22,7 +23,30 @@ from fastapi.responses import FileResponse
 
 from backend.server.engine import Engine
 
-app = FastAPI(title="AeroPINN")
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    """Warm evidence caches off-loop and close their workers on shutdown."""
+    def work():
+        try:
+            _compute_validation()
+            _compute_overlay(300.0)
+            get_shadow_service().warm()
+            get_modal_shadow_service().warm()
+        except Exception:
+            # Endpoints expose background calculation errors without preventing
+            # the live server from starting.
+            pass
+
+    threading.Thread(target=work, daemon=True).start()
+    yield
+    if _shadow_service is not None:
+        _shadow_service.close()
+    if _modal_shadow_service is not None:
+        _modal_shadow_service.close()
+
+
+app = FastAPI(title="AeroPINN", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -75,29 +99,6 @@ def get_shadow_service():
         from backend.validation.shadow import ShadowValidationService
         _shadow_service = ShadowValidationService()
     return _shadow_service
-
-
-@app.on_event("startup")
-def _warm_caches():
-    """Precompute the credibility views in a background thread so /health is up
-    immediately and the panel is ready by the time the operator opens it."""
-    def work():
-        try:
-            _compute_validation()
-            _compute_overlay(300.0)
-            get_shadow_service().warm()
-            get_modal_shadow_service().warm()
-        except Exception:
-            pass
-    threading.Thread(target=work, daemon=True).start()
-
-
-@app.on_event("shutdown")
-def _stop_background_services():
-    if _shadow_service is not None:
-        _shadow_service.close()
-    if _modal_shadow_service is not None:
-        _modal_shadow_service.close()
 
 
 @app.get("/health")
@@ -162,6 +163,14 @@ def _compute_overlay(speed_kmh: float):
 def validation():
     """EN 50318 validation table for the credibility view (cached)."""
     return _compute_validation()
+
+
+@app.get("/api/calibration-status")
+def physical_calibration_status():
+    """Expose what physical fidelity is and is not supported by evidence."""
+    from backend.validation.calibration import calibration_status
+
+    return calibration_status()
 
 
 @app.get("/api/overlay")

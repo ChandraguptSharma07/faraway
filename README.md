@@ -15,14 +15,16 @@ current state and a candidate control force, what is the contact force a few ms 
 now?"* A separate predictive controller uses those predictions to choose the best
 counter-force.
 
-## Validated against EN 50318
+## EN 50318 reference checks
 
-The classical solver reproduces the **EN 50318** reference pantograph–catenary dynamic
-interaction model and lands inside the standard's published result ranges at 250 and
-300 km/h (mean contact force, standard deviation, statistical max/min, uplift). The demo
-then pushes **beyond** the validated envelope — higher speed, degraded contact-wire
-tension, raised turbulence — where the **passive** pantograph begins losing contact and
-arcing while **AeroPINN holds contact**.
+The classical reduced solver lands inside the **EN 50318** numerical reference ranges
+used by this project at 250 and 300 km/h. Those checks validate a benchmark
+implementation; they do not identify a Lastochka/CHS2, a physical pantograph, or a
+specific catenary route. Beyond-envelope controls are simulation experiments and expose
+failed gates instead of being presented as railway validation.
+
+See [the real-system calibration contract](docs/REAL_SYSTEM_CALIBRATION.md) for the
+measured data and blind-validation ladder required before route-specific claims.
 
 ## Architecture
 
@@ -33,7 +35,7 @@ arcing while **AeroPINN holds contact**.
           └──────────────► FastAPI + WebSocket server ◄─────────────────┘
                                        │
                            React + Three.js frontend
-                     (3D digital twin + live instruments)
+                    (interactive 3D simulation + instruments)
                                        │
                             (optional) ESP32 servo over serial
 ```
@@ -42,7 +44,7 @@ arcing while **AeroPINN holds contact**.
 - `backend/pinn/`       — PyTorch PINN (data + ODE-residual loss), trained model
 - `backend/controller/` — PINN-MPC short-horizon predictive controller
 - `backend/server/`     — FastAPI + WebSocket streaming server
-- `frontend/`           — React + Three.js digital twin (live pantographs + uPlot traces)
+- `frontend/`           — React + Three.js simulation (live pantographs + uPlot traces)
 - `hardware/`           — ESP32/Arduino servo sketch + wiring notes (optional)
 
 ## Headline metrics

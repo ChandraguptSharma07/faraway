@@ -5,6 +5,7 @@ import json
 import numpy as np
 
 from backend.server.engine import Engine
+from backend.server.app import physical_calibration_status
 from backend.sim.parameters import kmh_to_ms
 
 
@@ -35,6 +36,15 @@ def test_frame_is_json_serializable_after_gust():
     for _ in range(20):
         e.step(20)
         json.dumps(e.frame())  # would raise TypeError on numpy bool/float
+
+
+def test_physical_calibration_status_blocks_unsupported_claims():
+    status = physical_calibration_status()
+    assert status["status"] == "REFERENCE_BENCHMARK_ONLY"
+    assert status["route_identified"] is False
+    assert status["hardware_validated"] is False
+    assert status["asset_boundary"]["lastochka_glb"] == "visual geometry only"
+    assert status["required_dataset_groups"]
 
 
 def test_gust_passive_spikes_aeropinn_absorbs():

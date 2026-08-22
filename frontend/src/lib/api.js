@@ -6,6 +6,12 @@ export async function fetchValidation() {
   return r.json()
 }
 
+export async function fetchCalibrationStatus() {
+  const r = await fetch(`${BASE}/api/calibration-status`)
+  if (!r.ok) throw new Error('calibration status fetch failed')
+  return r.json()
+}
+
 export async function fetchOverlay(speedKmh = 300) {
   const r = await fetch(`${BASE}/api/overlay?speed_kmh=${speedKmh}`)
   if (!r.ok) throw new Error('overlay fetch failed')

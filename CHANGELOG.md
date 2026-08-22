@@ -16,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Aligned controller evidence with the deployed 25 N, 18 ms, sensor/EKF and actuator-in-loop configuration.
 - Removed the distributed solver's artificial aerodynamic startup load step, separated incompatible uplift definitions, and added quantitative 36/48-mode convergence gates.
 - Integrated track travel across speed changes, added pixel-budgeted rendering, deferred the validation bundle, and removed the machine-specific Nix library path.
+- Added a machine-readable physical-calibration boundary and measured-data contract; relabelled EN 50318 results as reference checks.
 
 ### Fixed
 - Fixed an `ImportError` for `libstdc++.so.6` on NixOS by patching `run_local.sh` to inject the correct `LD_LIBRARY_PATH`.

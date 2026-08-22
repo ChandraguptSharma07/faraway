@@ -5,6 +5,7 @@ import './ShadowValidation.css'
 import {
   METRIC_LABELS,
   METRIC_UNITS,
+  fetchCalibrationStatus,
   fetchModalCalibration,
   fetchOverlay,
   fetchShadowValidation,
@@ -18,13 +19,14 @@ export default function CredibilityView({ onClose }) {
   const [ov, setOv] = useState(null)
   const [shadow, setShadow] = useState(null)
   const [modalShadow, setModalShadow] = useState(null)
+  const [calibration, setCalibration] = useState(null)
   const [err, setErr] = useState(null)
 
   useEffect(() => {
     let active = true
     let timer
-    Promise.all([fetchValidation(), fetchOverlay(300)])
-      .then(([v, o]) => { if (active) { setVal(v); setOv(o) } })
+    Promise.all([fetchValidation(), fetchOverlay(300), fetchCalibrationStatus()])
+      .then(([v, o, c]) => { if (active) { setVal(v); setOv(o); setCalibration(c) } })
       .catch((e) => { if (active) setErr(String(e)) })
 
     const pollShadow = () => Promise.all([
@@ -61,7 +63,17 @@ export default function CredibilityView({ onClose }) {
         {err && <p className="cred-err">{err} — is the backend running on :8000?</p>}
 
         <div className="cred-body">
-          
+          <section className="cred-claim-boundary">
+            <h3>PHYSICAL FIDELITY STATUS</h3>
+            {calibration ? (
+              <div className="claim-boundary-card">
+                <b className="mono">{calibration.status.replaceAll('_', ' ')}</b>
+                <span>Next gate: {calibration.next_gate.replaceAll('_', ' ')}</span>
+                <span>Visual train geometry is not physical identification.</span>
+              </div>
+            ) : <Loading />}
+          </section>
+
           <section className="cred-shadow">
             <h3>LIVE MODAL MODEL · CROSS-MODEL CONSISTENCY</h3>
             <p className="shadow-note">
@@ -92,7 +104,7 @@ export default function CredibilityView({ onClose }) {
           </section>
 
           <section className="cred-validation">
-            <h3>EN 50318 VALIDATION</h3>
+            <h3>EN 50318 REFERENCE CHECK</h3>
             {val ? ['250', '300'].map((sp) => (
               <ValTable key={sp} speed={sp} data={val[sp]} />
             )) : <Loading />}
@@ -123,7 +135,7 @@ function ValTable({ speed, data }) {
       <div className="val-th" role="row">
         <span role="columnheader">{speed} km/h</span>
         <span className={`val-badge ${allPass ? 'pass' : 'fail'}`} role="columnheader">
-          {allPass ? 'VALIDATED' : 'CHECK'}
+          {allPass ? 'IN RANGE' : 'CHECK'}
         </span>
       </div>
       {data.rows.map((r) => (
