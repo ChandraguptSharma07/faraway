@@ -34,6 +34,7 @@ class Disturbance:
         # across (0, turb_fmax]. Per-component amplitude chosen so the aggregate std
         # equals turb_std: std of sum of N random-phase sinusoids of amp a is a*sqrt(N/2).
         self._turb_f = np.linspace(0.7, cat.turb_fmax, n_turb)
+        self._turb_omega = 2.0 * np.pi * self._turb_f
         self._turb_phase = rng.uniform(0.0, 2.0 * np.pi, n_turb)
         self._turb_amp = cat.turb_std * np.sqrt(2.0 / n_turb)
         # Phase offset so the support-passing reference (x=0) starts at a support.
@@ -42,21 +43,30 @@ class Disturbance:
     # --- components ---------------------------------------------------------
     def y_span(self, t, speed_ms: float, beyond: BeyondEnvelope) -> np.ndarray | float:
         """Span-passing wire height. Peak at supports, sag mid-span."""
+        if getattr(t, "ndim", 0) == 0:
+            x = speed_ms * t + self._x0
+            L = self.cat.span_length
+            amp = self.cat.a_span / max(beyond.tension_factor, 1e-3)
+            amp2 = self.cat.a_span2 / max(beyond.tension_factor, 1e-3)
+            arg = 2 * np.pi * x / L
+            return amp * np.cos(arg) + amp2 * np.cos(2 * arg)
         x = speed_ms * np.asarray(t) + self._x0
         L = self.cat.span_length
-        # Degraded tension => more sag => larger amplitude (sag ~ 1/tension).
         amp = self.cat.a_span / max(beyond.tension_factor, 1e-3)
         amp2 = self.cat.a_span2 / max(beyond.tension_factor, 1e-3)
-        return amp * np.cos(2 * np.pi * x / L) + amp2 * np.cos(4 * np.pi * x / L)
+        arg = 2 * np.pi * x / L
+        return amp * np.cos(arg) + amp2 * np.cos(2 * arg)
 
     def y_turb(self, t, beyond: BeyondEnvelope) -> np.ndarray | float:
         """Band-limited turbulence (metres of equivalent wire displacement)."""
-        t = np.asarray(t)
         gain = beyond.turbulence_gain
+        if getattr(t, "ndim", 0) == 0:
+            phases = self._turb_omega * t + self._turb_phase
+            return float(self._turb_amp * np.sin(phases).sum() * gain)
         # Broadcast: sum over turbulence components.
-        phases = 2 * np.pi * np.outer(np.atleast_1d(t), self._turb_f) + self._turb_phase
-        s = self._turb_amp * np.sin(phases).sum(axis=-1) * gain
-        return s if np.ndim(t) else float(s[0])
+        t_arr = np.asarray(t)
+        phases = np.outer(t_arr, self._turb_omega) + self._turb_phase
+        return self._turb_amp * np.sin(phases).sum(axis=-1) * gain
 
     def y_wire(self, t, speed_ms: float, beyond: BeyondEnvelope) -> np.ndarray | float:
         """Total effective wire vertical trajectory the head follows."""
