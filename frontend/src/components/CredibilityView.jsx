@@ -1,19 +1,43 @@
 import { useEffect, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
-import { METRIC_LABELS, METRIC_UNITS, fetchOverlay, fetchValidation } from '../lib/api'
+import './ShadowValidation.css'
+import {
+  METRIC_LABELS,
+  METRIC_UNITS,
+  fetchOverlay,
+  fetchShadowValidation,
+  fetchValidation,
+} from '../lib/api'
 
 // The credibility panel: EN 50318 validation table (metrics inside the standard's
 // ranges) + PINN-vs-solver overlay + timing comparison. The headline shot.
 export default function CredibilityView({ onClose }) {
   const [val, setVal] = useState(null)
   const [ov, setOv] = useState(null)
+  const [shadow, setShadow] = useState(null)
   const [err, setErr] = useState(null)
 
   useEffect(() => {
+    let active = true
+    let timer
     Promise.all([fetchValidation(), fetchOverlay(300)])
-      .then(([v, o]) => { setVal(v); setOv(o) })
-      .catch((e) => setErr(String(e)))
+      .then(([v, o]) => { if (active) { setVal(v); setOv(o) } })
+      .catch((e) => { if (active) setErr(String(e)) })
+
+    const pollShadow = () => fetchShadowValidation()
+      .then((data) => {
+        if (!active) return
+        setShadow(data)
+        const warming = Object.values(data.scenarios).some((row) => row.status === 'WARMING_UP')
+        if (warming) timer = window.setTimeout(pollShadow, 1500)
+      })
+      .catch((e) => { if (active) setErr(String(e)) })
+    pollShadow()
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
   }, [])
 
   return (
@@ -22,7 +46,7 @@ export default function CredibilityView({ onClose }) {
         <header className="cred-header">
           <div>
             <h2>VALIDATION &amp; CREDIBILITY</h2>
-            <p className="cred-sub">Classical solver vs EN 50318 · PINN predictor vs classical solver</p>
+            <p className="cred-sub">Reduced model vs EN 50318 · distributed model in shadow mode</p>
           </div>
           <button className="cred-close" onClick={onClose} aria-label="Close">✕</button>
         </header>
@@ -30,6 +54,20 @@ export default function CredibilityView({ onClose }) {
         {err && <p className="cred-err">{err} — is the backend running on :8000?</p>}
 
         <div className="cred-body">
+          <section className="cred-shadow">
+            <h3>DISTRIBUTED MODEL · SHADOW VALIDATION</h3>
+            <p className="shadow-note">
+              Controller still uses the reduced model. Agreement is consistency evidence—not certification.
+            </p>
+            {shadow ? (
+              <div className="shadow-grid">
+                {['250', '300'].map((speed) => (
+                  <ShadowCard key={speed} report={shadow.scenarios[speed]} />
+                ))}
+              </div>
+            ) : <Loading />}
+          </section>
+
           <section className="cred-validation">
             <h3>EN 50318 VALIDATION</h3>
             {val ? ['250', '300'].map((sp) => (
@@ -110,8 +148,57 @@ function OverlayChart({ ov }) {
     <div className="overlay-chart">
       <div ref={ref} />
       <div className="overlay-legend">
-        <span><i className="sw solver" /> classical solver (ground truth)</span>
+        <span><i className="sw solver" /> reduced reference solver</span>
         <span><i className="sw pinn" /> PINN prediction (5 ms ahead)</span>
+      </div>
+    </div>
+  )
+}
+
+function ShadowCard({ report }) {
+  const stateClass = report.status.toLowerCase().replace('_', '-')
+  if (report.status === 'WARMING_UP' || report.status === 'ERROR') {
+    return (
+      <div className="shadow-card">
+        <div className="shadow-head">
+          <b>{report.speed_kmh} km/h</b>
+          <span className={`shadow-status ${stateClass}`}>{report.status.replace('_', ' ')}</span>
+        </div>
+        <div className="shadow-wait mono">
+          {report.error || 'distributed solver running outside live control loop…'}
+        </div>
+      </div>
+    )
+  }
+
+  const keyMetrics = ['mean_N', 'std_N', 'loss_of_contact_pct']
+  return (
+    <div className="shadow-card">
+      <div className="shadow-head">
+        <b>{report.speed_kmh} km/h</b>
+        <span className={`shadow-status ${stateClass}`}>{report.status}</span>
+      </div>
+      <div className="shadow-model-head mono"><span>METRIC</span><span>REDUCED</span><span>DISTRIBUTED</span><span>Δ</span></div>
+      {keyMetrics.map((key) => {
+        const metric = report.metrics[key]
+        return (
+          <div className="shadow-metric mono" key={key}>
+            <span>{METRIC_LABELS[key]}</span>
+            <span>{metric.legacy.toFixed(1)}{METRIC_UNITS[key]}</span>
+            <span>{metric.distributed.toFixed(1)}{METRIC_UNITS[key]}</span>
+            <span>{metric.difference_pct.toFixed(1)}%</span>
+          </div>
+        )
+      })}
+      <div className="shadow-gates">
+        {report.gates.map((gate) => (
+          <span className={gate.pass ? 'pass' : 'fail'} key={gate.name} title={`${gate.value} / ${gate.limit} ${gate.unit}`}>
+            <i />{gate.name}
+          </span>
+        ))}
+      </div>
+      <div className="shadow-scope mono">
+        {report.scope} · commit {report.source_commit.slice(0, 7)}
       </div>
     </div>
   )

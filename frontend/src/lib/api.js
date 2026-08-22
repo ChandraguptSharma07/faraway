@@ -12,6 +12,12 @@ export async function fetchOverlay(speedKmh = 300) {
   return r.json()
 }
 
+export async function fetchShadowValidation() {
+  const r = await fetch(`${BASE}/api/shadow-validation`)
+  if (!r.ok) throw new Error('shadow validation fetch failed')
+  return r.json()
+}
+
 const METRIC_LABELS = {
   mean_N: 'Mean force Fm',
   std_N: 'Std deviation',

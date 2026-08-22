@@ -36,6 +36,7 @@ _predictor = None
 _validation_cache = None
 _overlay_cache: dict[float, dict] = {}
 _servo = None
+_shadow_service = None
 
 
 def get_predictor():
@@ -55,6 +56,15 @@ def get_servo():
     return _servo
 
 
+def get_shadow_service():
+    """Background-only model comparison; never connected to control output."""
+    global _shadow_service
+    if _shadow_service is None:
+        from backend.validation.shadow import ShadowValidationService
+        _shadow_service = ShadowValidationService()
+    return _shadow_service
+
+
 @app.on_event("startup")
 def _warm_caches():
     """Precompute the credibility views in a background thread so /health is up
@@ -63,9 +73,16 @@ def _warm_caches():
         try:
             _compute_validation()
             _compute_overlay(300.0)
+            get_shadow_service().warm()
         except Exception:
             pass
     threading.Thread(target=work, daemon=True).start()
+
+
+@app.on_event("shutdown")
+def _stop_background_services():
+    if _shadow_service is not None:
+        _shadow_service.close()
 
 
 @app.get("/health")
@@ -133,6 +150,23 @@ def validation():
 def overlay(speed_kmh: float = 300.0):
     """PINN-predicted vs classical-solver contact force + timing (cached)."""
     return _compute_overlay(speed_kmh)
+
+
+@app.get("/api/shadow-validation")
+def shadow_validation(
+    speed_kmh: float = 250.0,
+    tension_factor: float = 1.0,
+    turbulence_gain: float = 1.0,
+    gust_active: bool = False,
+):
+    """Non-blocking reduced-vs-distributed benchmark status."""
+    from backend.validation.shadow import classify_operating_point
+
+    snapshot = get_shadow_service().snapshot()
+    snapshot["operating_point"] = classify_operating_point(
+        snapshot, speed_kmh, tension_factor, turbulence_gain, gust_active
+    )
+    return snapshot
 
 
 def _handle_input(engine: Engine, msg: dict):
