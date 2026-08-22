@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 - Restored sourced catenary parameters and strict contact-loss agreement gates in shadow comparisons.
 - Stabilized MPC candidate selection against sub-resolution numerical cost ties using minimum-effort resolution.
 - Aligned controller evidence with the deployed 25 N, 18 ms, sensor/EKF and actuator-in-loop configuration.
+- Removed the distributed solver's artificial aerodynamic startup load step, separated incompatible uplift definitions, and added quantitative 36/48-mode convergence gates.
 
 ### Fixed
 - Fixed an `ImportError` for `libstdc++.so.6` on NixOS by patching `run_local.sh` to inject the correct `LD_LIBRARY_PATH`.

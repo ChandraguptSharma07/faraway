@@ -148,3 +148,6 @@ def test_modal_sensitivity_matches_distributed_physics():
     assert "modes" in report
     assert "24" in report["modes"]
     assert "36" in report["modes"]
+    assert report["status"] == "CONVERGED"
+    assert all(gate["pass"] for gate in report["gates"])
+    assert report["convergence"]["std_N"] < 5.0

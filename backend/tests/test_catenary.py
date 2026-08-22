@@ -86,6 +86,23 @@ def test_newmark_solution_converges_when_time_step_is_halved():
     assert np.max(np.abs(coarse.force - fine.force)) < 0.1
 
 
+def test_initial_head_force_is_included_in_static_equilibrium():
+    params = small_params()
+    head_force = 20.0
+    common = {
+        "speed_ms": 20.0,
+        "duration": 0.01,
+        "dt": 5.0e-4,
+        "params": params,
+        "start_x": 30.0,
+        "head_force_fn": lambda _t, _q, _p: head_force,
+    }
+    unloaded = simulate_distributed(**common)
+    loaded = simulate_distributed(**common, initial_head_force=head_force)
+    assert loaded.force[0] > unloaded.force[0] + 15.0
+    assert np.all(np.isfinite(loaded.force))
+
+
 def test_legacy_comparison_reports_both_models_without_equating_them():
     comparison = compare_with_legacy(20.0, duration=0.05, params=small_params())
     values = tuple(comparison.__dict__.values())

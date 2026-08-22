@@ -57,12 +57,17 @@ def _contact_terms(
     return g, nodes, weights, datum, datum_velocity
 
 
-def _static_equilibrium(system: DistributedSystem, x: float, speed_ms: float) -> np.ndarray:
+def _static_equilibrium(
+    system: DistributedSystem,
+    x: float,
+    speed_ms: float,
+    head_force: float = 0.0,
+) -> np.ndarray:
     """Settle the prestressed system at the initial moving-contact location."""
     q = np.zeros(system.ndof)
     g, _, _, datum, _ = _contact_terms(system, x, speed_ms)
     kc = system.params.contact_stiffness
-    base_force = _external_force(system, 0.0)
+    base_force = _external_force(system, head_force)
     for _ in range(12):
         k, dropper_rhs, _ = system.active_structure(q)
         q_next = linalg.solve(
@@ -86,6 +91,7 @@ def simulate_distributed(
     panto: PantographParams | None = None,
     start_x: float | None = None,
     head_force_fn: ForceFunction | None = None,
+    initial_head_force: float = 0.0,
     record_stride: int = 1,
     max_active_iterations: int = 6,
 ) -> DistributedResult:
@@ -93,7 +99,8 @@ def simulate_distributed(
 
     ``head_force_fn`` represents aerodynamic/control force on the collector head.
     It is intentionally external to the catenary parameter set so its provenance can
-    be calibrated independently.
+    be calibrated independently. ``initial_head_force`` must match its value at
+    ``t=0`` when that force is already present, preventing an artificial load step.
     """
     if speed_ms <= 0.0 or duration <= 0.0 or dt <= 0.0:
         raise ValueError("speed_ms, duration, and dt must be positive")
@@ -133,7 +140,7 @@ def simulate_distributed(
     contact_history = np.empty((ns, n))
     messenger_history = np.empty((ns, n))
 
-    q = _static_equilibrium(system, start_x, speed_ms)
+    q = _static_equilibrium(system, start_x, speed_ms, initial_head_force)
     v = np.zeros(system.ndof)
     k, dropper_rhs, slack = system.active_structure(q)
     g, _, _, datum, datum_v = _contact_terms(system, start_x, speed_ms)
@@ -142,7 +149,7 @@ def simulate_distributed(
     trial_force = params.contact_stiffness * gap + params.contact_damping * gap_v
     active_contact = gap > 0.0 and trial_force > 0.0
     p = max(trial_force, 0.0) if active_contact else 0.0
-    applied = _external_force(system, 0.0) + dropper_rhs
+    applied = _external_force(system, initial_head_force) + dropper_rhs
     if active_contact:
         applied += (params.contact_stiffness * datum + params.contact_damping * datum_v) * g
         k = k + params.contact_stiffness * np.outer(g, g)

@@ -147,6 +147,7 @@ class ShadowConfig:
 
 
 def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) -> dict:
+    """Compare modal orders under identical inputs and retain mesh context."""
     speed_ms = kmh_to_ms(speed_kmh)
     config = config or ShadowConfig()
     dist_params = replace(DistributedCatenaryParams(), n_spans=config.n_spans, elements_per_span=config.fine_elements_per_span)
@@ -159,6 +160,7 @@ def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) ->
         config.fine_dt,
         params=dist_params,
         head_force_fn=lambda _t, _q, _p: aerodynamic_force,
+        initial_head_force=aerodynamic_force,
         record_stride=config.record_stride,
     )
     distributed = _distributed_metrics(fine_result, config.duration)
@@ -168,9 +170,26 @@ def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) ->
         live_res = simulate_live(speed_ms, config.duration, dt=config.coarse_dt, cat=cat, mode_count=modes, n_spans=config.n_spans)
         live_runs[str(modes)] = live_res
         
+    reference = live_runs["48"]
+    candidate = live_runs["36"]
+    convergence = {
+        key: _relative_difference(candidate[key], reference[key])
+        for key in ("mean_N", "std_N")
+    }
+    convergence["loss_of_contact_pp"] = abs(
+        candidate["loss_of_contact_pct"] - reference["loss_of_contact_pct"]
+    )
+    gates = [
+        _gate("36/48 mean-force convergence", convergence["mean_N"], 2.0, "%"),
+        _gate("36/48 force-variation convergence", convergence["std_N"], 5.0, "%"),
+        _gate("36/48 contact-loss convergence", convergence["loss_of_contact_pp"], 0.5, "pp"),
+    ]
     return {
         "distributed": distributed,
-        "modes": live_runs
+        "modes": live_runs,
+        "convergence": {key: round(value, 3) for key, value in convergence.items()},
+        "gates": gates,
+        "status": "CONVERGED" if all(gate["pass"] for gate in gates) else "INVESTIGATE",
     }
 
 def _source_commit() -> str:
@@ -212,16 +231,20 @@ def _relative_difference(a: float, b: float, floor: float = 1.0e-9) -> float:
     return 100.0 * abs(a - b) / denominator
 
 
-def _comparison_metrics(legacy: dict, distributed: dict) -> dict:
-    out = {}
-    for key in (
+def _comparison_metrics(
+    legacy: dict,
+    distributed: dict,
+    keys: tuple[str, ...] = (
         "mean_N",
         "std_N",
         "stat_max_N",
         "stat_min_N",
         "max_uplift_mm",
         "loss_of_contact_pct",
-    ):
+    ),
+) -> dict:
+    out = {}
+    for key in keys:
         lv = float(legacy[key])
         dv = float(distributed[key])
         out[key] = {
@@ -340,29 +363,12 @@ def run_modal_calibration_scenario(
         raise ValueError(f"supported shadow speeds are {SUPPORTED_SPEEDS}")
     config = config or ShadowConfig()
     thresholds = thresholds or ShadowThresholds()
-    speed_ms = kmh_to_ms(speed_kmh)
-    fine_params = replace(
-        DistributedCatenaryParams(),
-        n_spans=config.n_spans,
-        elements_per_span=config.fine_elements_per_span,
-    )
-    cat = replace(CatenaryParams(), turb_std=0.0)
-    aerodynamic_force = cat.c_aero * speed_ms * speed_ms
-
     started = time.perf_counter()
-    live_result = simulate_live(speed_ms, config.duration, dt=config.coarse_dt, cat=cat, mode_count=36, n_spans=config.n_spans)
-    
-    fine_result = simulate_distributed(
-        speed_ms,
-        config.duration,
-        config.fine_dt,
-        params=fine_params,
-        head_force_fn=lambda _t, _q, _p: aerodynamic_force,
-        record_stride=config.record_stride,
-    )
-
-    distributed = _distributed_metrics(fine_result, config.duration)
-    # mock legacy format for comparison
+    sensitivity = run_modal_sensitivity(speed_kmh, config)
+    live_result = sensitivity["modes"]["36"]
+    distributed = sensitivity["distributed"]
+    # Retain the API's first-column key for frontend compatibility. In this
+    # report it contains the live 36-mode result, not the legacy plant.
     legacy = {
         "mean_N": live_result["mean_N"],
         "std_N": live_result["std_N"],
@@ -371,13 +377,14 @@ def run_modal_calibration_scenario(
         "stat_max_N": live_result["mean_N"] + 3.0 * live_result["std_N"],
         "stat_min_N": live_result["mean_N"] - 3.0 * live_result["std_N"],
     }
-    
-    gates = [
+
+    model_form_gates = [
         _gate("Mean-force agreement", _relative_difference(legacy["mean_N"], distributed["mean_N"]), thresholds.mean_difference_pct, "%"),
         _gate("Force-variation agreement", _relative_difference(legacy["std_N"], distributed["std_N"]), thresholds.std_difference_pct, "%"),
         _gate("Contact-loss agreement", abs(legacy["loss_of_contact_pct"] - distributed["loss_of_contact_pct"]), thresholds.contact_loss_difference_pp, "pp"),
     ]
-    
+    gates = model_form_gates + sensitivity["gates"]
+
     return {
         "status": "AGREEMENT" if all(gate["pass"] for gate in gates) else "INVESTIGATE",
         "speed_kmh": speed_kmh,
@@ -386,15 +393,24 @@ def run_modal_calibration_scenario(
         "model_version": "realtime-modal-36",
         "authoritative_model": "distributed-v1",
         "controller_affected": False,
-        "scope": "nominal vertical dynamics; modal vs fine mesh",
+        "scope": "nominal vertical dynamics; model-form consistency and modal convergence",
         "limitations": [
+            "Cross-model agreement is not route or hardware validation.",
             "Tension degradation, gusts, thermal effects and lateral dynamics are excluded.",
+            "Support uplift is excluded because the modal and distributed outputs use different definitions.",
         ],
-        "metrics": _comparison_metrics(legacy, distributed),
+        "metrics": _comparison_metrics(
+            legacy,
+            distributed,
+            ("mean_N", "std_N", "stat_max_N", "stat_min_N", "loss_of_contact_pct"),
+        ),
         "gates": gates,
         "en50318": [],
         "numerics": {
             **asdict(config),
+            "modal_orders": [24, 36, 48, 60],
+            "modal_reference_order": 48,
+            "modal_convergence": sensitivity["convergence"],
             "compute_seconds": round(time.perf_counter() - started, 3),
         },
         "parameter_provenance": PARAMETER_PROVENANCE,
@@ -440,6 +456,7 @@ def run_shadow_scenario(
         config.fine_dt,
         params=fine_params,
         head_force_fn=lambda _t, _q, _p: aerodynamic_force,
+        initial_head_force=aerodynamic_force,
         record_stride=config.record_stride,
     )
     temporal_result = simulate_distributed(
@@ -448,6 +465,7 @@ def run_shadow_scenario(
         config.coarse_dt,
         params=fine_params,
         head_force_fn=lambda _t, _q, _p: aerodynamic_force,
+        initial_head_force=aerodynamic_force,
         record_stride=max(1, config.record_stride // 2),
     )
     mesh_result = simulate_distributed(
@@ -456,6 +474,7 @@ def run_shadow_scenario(
         config.fine_dt,
         params=coarse_params,
         head_force_fn=lambda _t, _q, _p: aerodynamic_force,
+        initial_head_force=aerodynamic_force,
         record_stride=config.record_stride,
     )
 
