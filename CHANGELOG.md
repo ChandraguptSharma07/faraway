@@ -30,3 +30,7 @@ All notable changes to this project will be documented in this file.
 
 - Created `run_local.sh` to run the frontend and backend servers concurrently without Docker.
 - Created `Makefile` with an `up` target to run the `run_local.sh` script via `make up`.
+
+### Fixed
+- Fixed an issue in `run_local.sh` where stopping `make up` with Ctrl+C would leave zombie `vite` and `uvicorn` processes running in the background. This caused subsequent runs to fail silently and resulted in WebSocket connection errors (`Firefox can't establish a connection`) because the browser was connecting to a zombie frontend server trying to talk to a dead backend.
+- Updated `vite.config.js` proxy target for `/ws` to use `http://` for more reliable WebSocket upgrade handling.

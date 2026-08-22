@@ -42,7 +42,7 @@ python -m uvicorn backend.server.app:app --port 8000 &
 BACKEND_PID=$!
 
 cd frontend
-npm run dev &
+npx vite &
 FRONTEND_PID=$!
 cd ..
 
@@ -51,13 +51,16 @@ cleanup() {
     echo -e "\nShutting down servers..."
     kill $BACKEND_PID 2>/dev/null
     kill $FRONTEND_PID 2>/dev/null
+    # pkill child processes just in case
+    pkill -P $FRONTEND_PID 2>/dev/null
+    pkill -P $BACKEND_PID 2>/dev/null
     wait $BACKEND_PID $FRONTEND_PID 2>/dev/null
     echo "Done."
     exit 0
 }
 
 # Catch Ctrl+C (SIGINT) and termination signals
-trap cleanup SIGINT SIGTERM
+trap cleanup SIGINT SIGTERM EXIT
 
 # Wait indefinitely for background processes
 wait
