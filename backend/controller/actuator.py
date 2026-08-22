@@ -78,3 +78,48 @@ class ForceActuator:
         delta = (commands - self.force) * response
         max_delta = self.params.force_rate_limit * effective_time
         return (self.force + np.clip(delta, -max_delta, max_delta)).astype(np.float32)
+
+    def preview_profiles(
+        self,
+        commands: np.ndarray,
+        interval: float,
+        n_intervals: int,
+    ) -> np.ndarray:
+        """Mean applied force per interval without mutating the live actuator.
+
+        Each candidate command is held across the preview. The calculation uses the
+        same delay queue, first-order response, rate limit, and force limit as step().
+        Shape is ``(n_intervals, n_candidates)``.
+        """
+        if interval <= 0.0 or n_intervals < 1:
+            raise ValueError("preview interval and count must be positive")
+        substeps = max(1, int(round(interval / self.dt)))
+        commands = np.clip(
+            np.atleast_1d(np.asarray(commands, dtype=np.float64)),
+            -self.params.force_limit,
+            self.params.force_limit,
+        )
+        forces = np.full(commands.shape, self.force, dtype=np.float64)
+        queue = np.tile(np.asarray(self._queue, dtype=np.float64), (len(commands), 1))
+        profile = np.empty((n_intervals, len(commands)), dtype=np.float32)
+        p = self.params
+
+        for block in range(n_intervals):
+            total = np.zeros_like(forces)
+            for _ in range(substeps):
+                if self._delay_steps:
+                    delayed = queue[:, 0].copy()
+                    queue[:, :-1] = queue[:, 1:]
+                    queue[:, -1] = commands
+                else:
+                    delayed = commands
+                desired_rate = (delayed - forces) / p.time_constant
+                rate = np.clip(desired_rate, -p.force_rate_limit, p.force_rate_limit)
+                forces = np.clip(
+                    forces + self.dt * rate,
+                    -p.force_limit,
+                    p.force_limit,
+                )
+                total += forces
+            profile[block] = total / substeps
+        return profile

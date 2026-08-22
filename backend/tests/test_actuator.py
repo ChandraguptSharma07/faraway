@@ -40,6 +40,19 @@ def test_actuator_preview_cannot_apply_a_new_command_before_delay():
     assert np.all(preview == actuator.force)
 
 
+def test_actuator_profile_preview_matches_dynamics_without_mutating_live_state():
+    params = ActuatorParams(transport_delay=4.0e-3)
+    live = ForceActuator(1.0e-3, params)
+    reference = ForceActuator(1.0e-3, params)
+    profile = live.preview_profiles(np.array([60.0]), interval=5.0e-3, n_intervals=3)
+    expected = []
+    for _ in range(3):
+        expected.append(np.mean([reference.step(60.0) for _ in range(5)]))
+    assert np.allclose(profile[:, 0], expected)
+    assert live.force == 0.0
+    assert live.command == 0.0
+
+
 class SlowBenchmarkPredictor:
     H = 5.0e-3
 
@@ -49,13 +62,19 @@ class SlowBenchmarkPredictor:
     def predict_force_candidates(self, _state, candidates, _fa, _wire):
         return np.full(len(candidates), 115.0)
 
+    def predict_state_candidates(self, states, candidates, _fa, _wire):
+        return np.asarray(states), np.full(len(candidates), 115.0)
 
-def test_engine_expands_control_period_and_marks_actuator_as_shadow_only():
+
+def test_engine_marks_explicit_actuator_as_in_loop_and_keeps_ideal_reference():
     engine = Engine(predictor=SlowBenchmarkPredictor())
     frame = engine.frame()
-    assert frame["control_timing"]["period_ms"] == 15.0
+    assert frame["control_timing"]["period_ms"] == 10.0
     assert frame["operating_status"] == "NOMINAL"
-    assert frame["control_fidelity"] == "IDEALIZED_ACTUATION"
-    assert frame["actuator"]["mode"] == "SHADOW_ONLY"
+    assert frame["control_fidelity"] == "SIMULATED_ACTUATOR_IN_LOOP"
+    assert frame["actuator"]["mode"] == "SIMULATED_IN_LOOP"
+    assert frame["deployment_status"] == "SIMULATION_ONLY"
+    assert frame["actuator"]["parameter_status"] == "ASSUMED_NOT_IDENTIFIED"
     assert "f_command" in frame["aeropinn"]
     assert "f_actuator_estimate" in frame["aeropinn"]
+    assert "idealized_reference" in frame

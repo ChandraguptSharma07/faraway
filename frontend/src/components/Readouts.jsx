@@ -30,10 +30,10 @@ export default function Readouts({ frameRef }) {
         <CompareRow label="FORCE σ" pv={p ? p.std.toFixed(1) : '—'} av={a ? a.std.toFixed(1) : '—'} unit="N" />
         <CompareRow label="ARC TIME" pv={p ? p.arc_pct.toFixed(1) : '—'} av={a ? a.arc_pct.toFixed(1) : '—'} unit="%"
                     pDanger={p && p.arc_pct > 0.05} aDanger={a && a.arc_pct > 0.05} />
-        <div className="actuator-health mono" title="Actuator dynamics run in shadow until the controller is retrained with delay and bandwidth limits">
-          <span className="idealized">* IDEALIZED CONTROL</span>
+        <div className="actuator-health mono" title="Command is passed through the displayed simulated actuator delay, bandwidth, rate and force limits">
+          <span className="idealized">* SIMULATED ACTUATOR-IN-LOOP</span>
           <span>CMD <b>{Number.isFinite(a?.f_command) ? a.f_command.toFixed(0) : '—'} N</b></span>
-          <span>HW EST <b>{Number.isFinite(a?.f_actuator_estimate) ? a.f_actuator_estimate.toFixed(0) : '—'} N</b></span>
+          <span>APPLIED <b>{Number.isFinite(a?.f_actuator_estimate) ? a.f_actuator_estimate.toFixed(0) : '—'} N</b></span>
         </div>
       </div>
     </div>

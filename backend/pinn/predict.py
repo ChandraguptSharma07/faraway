@@ -87,6 +87,51 @@ class PINNPredictor:
         )
 
     @torch.no_grad()
+    def predict_state_candidates(self, states4, f_controls, fa: float, wirefeat):
+        """Batch one-horizon state and contact-force predictions.
+
+        Unlike predict_force_candidates(), every candidate may start from a different
+        state. This supports chained actuator-aware MPC rollouts in one network pass
+        per horizon step.
+        """
+        states = np.asarray(states4, dtype=np.float32)
+        if states.ndim == 1:
+            states = states[None, :]
+        controls = np.atleast_1d(np.asarray(f_controls, dtype=np.float32))
+        if states.shape != (len(controls), 4):
+            raise ValueError("states4 must have shape (n_candidates, 4)")
+        y0, y0d, y0dd = wirefeat
+        ctx_np = np.empty((len(controls), 8), dtype=np.float32)
+        ctx_np[:, :4] = states
+        ctx_np[:, 4] = controls + fa
+        ctx_np[:, 5] = y0
+        ctx_np[:, 6] = y0d
+        ctx_np[:, 7] = y0dd
+        # One batched forward evaluates H and H+/-epsilon. A backward/autograd pass at
+        # every MPC rollout step misses the real-time deadline on shared CPUs.
+        # The network trajectory is smooth, so this backward difference accurately
+        # recovers velocity while retaining a pure inference path.
+        epsilon = min(1.0e-4, 0.05 * self.H)
+        ctx = torch.from_numpy(np.concatenate((ctx_np, ctx_np, ctx_np), axis=0))
+        tau = torch.cat((
+            torch.full((len(controls), 1), self.H),
+            torch.full((len(controls), 1), self.H + epsilon),
+            torch.full((len(controls), 1), self.H - epsilon),
+        ))
+        z1_all, z2_all = self.model.trajectory(tau, ctx)
+        n = len(controls)
+        z1, z1_next, z1_prev = z1_all[:n], z1_all[n:2*n], z1_all[2*n:]
+        z2, z2_next, z2_prev = z2_all[:n], z2_all[n:2*n], z2_all[2*n:]
+        z1d = (z1_next - z1_prev) / (2.0 * epsilon)
+        z2d = (z2_next - z2_prev) / (2.0 * epsilon)
+        # Reuse the already-computed head trajectory; a second network forward pass
+        # here almost doubles MPC latency.
+        wire_h = self.model.wire(tau[:n], ctx[:n])
+        force = torch.relu(self.panto.kc * (z1 - wire_h))
+        next_states = torch.cat((z1, z1d, z2, z2d), dim=1)
+        return next_states.detach().numpy(), force.detach().squeeze(-1).numpy()
+
+    @torch.no_grad()
     def benchmark_latency(
         self,
         n_candidates: int = 32,
