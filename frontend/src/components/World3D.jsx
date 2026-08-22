@@ -9,6 +9,8 @@ const ACCENT = 0x2ee6d6
 const PASSIVE = 0xd1a84b
 const ARC = 0xff3b3b
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
+const PANTOGRAPH_X = -6.4
+const PANTOGRAPH_Y = -0.42
 
 function clamp(value, low, high) {
   return Math.max(low, Math.min(high, value))
@@ -55,6 +57,13 @@ function makePantograph(isActive) {
     metalness: 0.5,
     roughness: 0.3,
   })
+
+  const mountingPlate = new THREE.Mesh(
+    new THREE.BoxGeometry(1.55, 0.1, 1.05),
+    dark,
+  )
+  mountingPlate.position.y = 1.76
+  group.add(mountingPlate)
 
   const rods = []
   for (let i = 0; i < 8; i += 1) {
@@ -253,7 +262,8 @@ function makeTrack(laneZ) {
     group,
     update(offset) {
       for (let i = 0; i < 45; i += 1) {
-        matrix.makeTranslation(-26 + i * 1.2 - offset, -2.27, laneZ)
+        // Lastochka's cab points toward -X, so the ground must travel +X.
+        matrix.makeTranslation(-26 + i * 1.2 + offset, -2.27, laneZ)
         sleepers.setMatrixAt(i, matrix)
       }
       sleepers.instanceMatrix.needsUpdate = true
@@ -277,7 +287,7 @@ function makeLane(source, laneZ, isActive) {
   root.add(train)
 
   const pantograph = makePantograph(isActive)
-  pantograph.group.position.x = 3.4
+  pantograph.group.position.set(PANTOGRAPH_X, PANTOGRAPH_Y, 0)
   root.add(pantograph.group)
 
   const underglow = new THREE.PointLight(isActive ? ACCENT : PASSIVE, 5, 8, 2)
@@ -403,7 +413,7 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
       for (let i = 0; i < tracks.length; i += 1) tracks[i].update(trackOffset)
       for (let i = 0; i < laneData.length; i += 1) {
         const result = laneData[i].pantograph.update(systems[i], current, physicsRef.current, reducedRef.current)
-        const contactX = 3.4
+        const contactX = PANTOGRAPH_X
         const contactY = result.lost ? result.wireY : result.topY + 0.065
         wires[i].update(contactX, result.wireY, contactY, result.lost)
         if (!reducedRef.current) laneData[i].root.position.y = Math.sin(elapsed * 2.2 + i) * 0.008
