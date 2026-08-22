@@ -5,6 +5,7 @@ import './ShadowValidation.css'
 import {
   METRIC_LABELS,
   METRIC_UNITS,
+  fetchModalCalibration,
   fetchOverlay,
   fetchShadowValidation,
   fetchValidation,
@@ -28,7 +29,7 @@ export default function CredibilityView({ onClose }) {
 
     const pollShadow = () => Promise.all([
       fetchShadowValidation(),
-      fetch('/api/modal-calibration').then(r => r.json())
+      fetchModalCalibration(),
     ])
       .then(([data, modalData]) => {
         if (!active) return

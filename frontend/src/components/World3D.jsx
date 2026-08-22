@@ -354,7 +354,6 @@ export default function World3D({
     camera.lookAt(0, 0.1, 0)
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(1)
     renderer.setClearColor(0x05070b, 0)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -405,6 +404,13 @@ export default function World3D({
 
     const resize = () => {
       const rect = mount.getBoundingClientRect()
+      const pixelBudget = 2_000_000
+      const budgetRatio = Math.sqrt(pixelBudget / Math.max(rect.width * rect.height, 1))
+      const maximumRatio = Math.max(1, Math.min(1.5, budgetRatio))
+      const pixelRatio = reducedRef.current
+        ? 1
+        : clamp(window.devicePixelRatio || 1, 1, maximumRatio)
+      renderer.setPixelRatio(pixelRatio)
       renderer.setSize(rect.width, rect.height, false)
       camera.aspect = rect.width / Math.max(rect.height, 1)
       camera.updateProjectionMatrix()
@@ -432,13 +438,16 @@ export default function World3D({
     )
 
     const clock = new THREE.Clock()
+    let trackDistance = 0
     const draw = () => {
-      const elapsed = clock.getElapsedTime()
+      const delta = Math.min(clock.getDelta(), 0.1)
       const current = frameRef.current
       const systems = [current?.passive, current?.aeropinn]
-      const trackOffset = current ? ((current.speed_kmh / 3.6) * elapsed * 0.06) % 1.2 : 0
+      if (current) {
+        trackDistance = (trackDistance + (current.speed_kmh / 3.6) * delta * 0.06) % 1.2
+      }
 
-      for (let i = 0; i < tracks.length; i += 1) tracks[i].update(trackOffset)
+      for (let i = 0; i < tracks.length; i += 1) tracks[i].update(trackDistance)
       for (let i = 0; i < laneData.length; i += 1) {
         const result = laneData[i].pantograph.update(
           systems[i],

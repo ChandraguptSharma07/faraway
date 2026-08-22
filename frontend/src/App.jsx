@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import './App.css'
 import { useTelemetry } from './hooks/useTelemetry'
-import World3D from './components/World3D'
 import ForceTrace from './components/ForceTrace'
 import Readouts from './components/Readouts'
 import Controls from './components/Controls'
-import CredibilityView from './components/CredibilityView'
+
+const World3D = lazy(() => import('./components/World3D'))
+const CredibilityView = lazy(() => import('./components/CredibilityView'))
 
 export default function App() {
   const { frameRef, historyRef, connected, send } = useTelemetry()
@@ -41,13 +42,15 @@ export default function App() {
       </header>
 
       <section className="world-zone">
-        <World3D
-          frameRef={frameRef}
-          prefersReducedMotion={reduced}
-          showPhysics={showPhysics}
-          motionGain={amplifyMotion ? 25 : 1}
-          cameraReset={cameraReset}
-        />
+        <Suspense fallback={<div className="world3d"><div className="world3d-status mono">loading 3D renderer…</div></div>}>
+          <World3D
+            frameRef={frameRef}
+            prefersReducedMotion={reduced}
+            showPhysics={showPhysics}
+            motionGain={amplifyMotion ? 25 : 1}
+            cameraReset={cameraReset}
+          />
+        </Suspense>
         <div className="view-tools">
           <button
             className={`physics-toggle ${showPhysics ? 'on' : ''}`}
@@ -89,7 +92,11 @@ export default function App() {
         </div>
       </section>
 
-      {showCred && <CredibilityView onClose={() => setShowCred(false)} />}
+      {showCred && (
+        <Suspense fallback={null}>
+          <CredibilityView onClose={() => setShowCred(false)} />
+        </Suspense>
+      )}
     </div>
   )
 }

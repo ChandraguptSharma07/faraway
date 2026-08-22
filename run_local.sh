@@ -7,7 +7,9 @@ echo "Initializing setup..."
 
 # 1. Setup Backend Environment
 if [ -e "/run/current-system/sw/bin/nixos-version" ]; then
-    export LD_LIBRARY_PATH="/nix/store/wxw6l8nva5rql6cdachnf9vfkwk2ihq8-ld-library-path/share/nix-ld/lib/:$LD_LIBRARY_PATH"
+    if [ -n "${NIX_LD_LIBRARY_PATH:-}" ]; then
+        export LD_LIBRARY_PATH="${NIX_LD_LIBRARY_PATH}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
 fi
 
 if [ ! -d ".venv" ]; then

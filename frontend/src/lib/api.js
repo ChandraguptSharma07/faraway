@@ -18,6 +18,12 @@ export async function fetchShadowValidation() {
   return r.json()
 }
 
+export async function fetchModalCalibration() {
+  const r = await fetch(`${BASE}/api/modal-calibration`)
+  if (!r.ok) throw new Error('modal calibration fetch failed')
+  return r.json()
+}
+
 const METRIC_LABELS = {
   mean_N: 'Mean force Fm',
   std_N: 'Std deviation',
