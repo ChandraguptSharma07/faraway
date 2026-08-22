@@ -32,8 +32,8 @@ arcing while **AeroPINN holds contact**.
           │                                                              │
           └──────────────► FastAPI + WebSocket server ◄─────────────────┘
                                        │
-                              React + Vite frontend
-                        (2.5D side elevation + live instruments)
+                           React + Three.js frontend
+                     (3D digital twin + live instruments)
                                        │
                             (optional) ESP32 servo over serial
 ```
@@ -42,7 +42,7 @@ arcing while **AeroPINN holds contact**.
 - `backend/pinn/`       — PyTorch PINN (data + ODE-residual loss), trained model
 - `backend/controller/` — PINN-MPC short-horizon predictive controller
 - `backend/server/`     — FastAPI + WebSocket streaming server
-- `frontend/`           — React + Vite instrument UI (Canvas 2.5D + uPlot traces)
+- `frontend/`           — React + Three.js digital twin (live pantographs + uPlot traces)
 - `hardware/`           — ESP32/Arduino servo sketch + wiring notes (optional)
 
 ## Headline metrics
@@ -104,6 +104,14 @@ python -m backend.pinn.train
 
 The trained model (`backend/pinn/pinn_model.pt`, ~40 KB) is committed so the demo runs
 out of the box; the command above regenerates it.
+
+## 3D model attribution
+
+The browser demo uses a performance-optimized, lead-car derivative of
+[Lastochka electric train](https://sketchfab.com/3d-models/lastochka-electric-train-1e2e86e317164b5983a000f79c6fe7a2)
+by tiunov.se, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+The telemetry-driven pantograph, catenary, rails, effects, and scene are custom AeroPINN
+geometry. The original train model was pruned and optimized for real-time web use.
 
 ## Requirements
 

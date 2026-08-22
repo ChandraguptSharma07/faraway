@@ -22,6 +22,10 @@ dist/
 .vite/
 *.local
 
+# Local source models (the optimized web derivative is kept in frontend/public/models/)
+/chs2_electric_locomotive.glb
+/lastochka_electric_train.glb
+
 # Env / secrets
 .env
 .env.*

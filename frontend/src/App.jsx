@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 import { useTelemetry } from './hooks/useTelemetry'
-import WorldCanvas from './components/WorldCanvas'
+import World3D from './components/World3D'
 import ForceTrace from './components/ForceTrace'
 import Readouts from './components/Readouts'
 import Controls from './components/Controls'
@@ -10,12 +10,11 @@ import CredibilityView from './components/CredibilityView'
 export default function App() {
   const { frameRef, historyRef, connected, send } = useTelemetry()
   const [showCred, setShowCred] = useState(false)
-  const [reduced, setReduced] = useState(false)
+  const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [showPhysics, setShowPhysics] = useState(true)
 
   useEffect(() => {
     const m = window.matchMedia('(prefers-reduced-motion: reduce)')
-    setReduced(m.matches)
     const h = (e) => setReduced(e.matches)
     m.addEventListener('change', h)
     return () => m.removeEventListener('change', h)
@@ -40,7 +39,7 @@ export default function App() {
       </header>
 
       <section className="world-zone">
-        <WorldCanvas frameRef={frameRef} prefersReducedMotion={reduced} showPhysics={showPhysics} />
+        <World3D frameRef={frameRef} prefersReducedMotion={reduced} showPhysics={showPhysics} />
         <button
           className={`physics-toggle ${showPhysics ? 'on' : ''}`}
           onClick={() => setShowPhysics((v) => !v)}

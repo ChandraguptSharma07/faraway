@@ -4,7 +4,6 @@ import 'uplot/dist/uPlot.min.css'
 
 const ACCENT = '#2ee6d6'
 const PASSIVE = '#c9a24a'  // amber-grey: the jagged baseline (not red — red is fault-only)
-const ARC = '#ff3b3b'
 const SETPOINT = 115
 
 // Live contact-force trace: passive (jagged, spiking through the zero/arc threshold)

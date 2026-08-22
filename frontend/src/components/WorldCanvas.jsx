@@ -309,16 +309,6 @@ function drawArc(ctx, x, headY, wireY, reduced) {
 
 // ---------------- physics-proof overlays ----------------
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath()
-  ctx.moveTo(x + r, y)
-  ctx.arcTo(x + w, y, x + w, y + h, r)
-  ctx.arcTo(x + w, y + h, x, y + h, r)
-  ctx.arcTo(x, y + h, x, y, r)
-  ctx.arcTo(x, y, x + w, y, r)
-  ctx.closePath()
-}
-
 function vArrow(ctx, x, yFrom, len, up, color, name, value) {
   const tip = up ? yFrom - len : yFrom + len
   const dir = up ? -1 : 1

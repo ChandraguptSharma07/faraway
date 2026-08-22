@@ -153,6 +153,7 @@ class Engine:
             "aero_N": round(self.dist.aero_force(speed_ms, beyond), 1),
             "passive": {
                 "head_mm": round(1e3 * float(self.state_p[0]), 3),
+                "frame_mm": round(1e3 * float(self.state_p[2]), 3),
                 "contact_force": round(self.force_p, 2),
                 "contact_lost": bool(self.force_p <= 0.0),
                 "uplift_mm": round(1e3 * max(self.force_p, 0.0) / s_wire, 2),
@@ -161,6 +162,7 @@ class Engine:
             },
             "aeropinn": {
                 "head_mm": round(1e3 * float(self.state_a[0]), 3),
+                "frame_mm": round(1e3 * float(self.state_a[2]), 3),
                 "contact_force": round(self.force_a, 2),
                 "contact_lost": bool(self.force_a <= 0.0),
                 "uplift_mm": round(1e3 * max(self.force_a, 0.0) / s_wire, 2),

@@ -49,7 +49,7 @@ export default function Controls({ send }) {
       </div>
 
       <Slider label="SPEED" value={speed} min={80} max={400} step={1} unit="km/h"
-              onChange={onSpeed} mark={300} markLabel="envelope" />
+              onChange={onSpeed} />
       <Slider label="CONTACT-WIRE TENSION" value={tension} min={0.3} max={1.0} step={0.01}
               unit="" fmt={(v) => (v * 100).toFixed(0) + '%'} invert onChange={onTension} />
       <Slider label="TURBULENCE" value={turb} min={0.5} max={4.0} step={0.05}
@@ -62,7 +62,7 @@ export default function Controls({ send }) {
   )
 }
 
-function Slider({ label, value, min, max, step, unit, fmt, onChange, mark, markLabel }) {
+function Slider({ label, value, min, max, step, unit, fmt, onChange }) {
   const pct = ((value - min) / (max - min)) * 100
   return (
     <div className="slider">
