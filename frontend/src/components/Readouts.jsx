@@ -1,4 +1,5 @@
 import { useThrottledFrame } from '../hooks/useTelemetry'
+import './ControlHealth.css'
 
 // Monospaced HUD readouts + the live scoreboard (std dev and % arc time, passive
 // vs AeroPINN — the two headline metrics).
@@ -7,36 +8,42 @@ export default function Readouts({ frameRef }) {
   const p = f && f.passive
   const a = f && f.aeropinn
   const beyond = f && (f.speed_kmh > 300 || f.tension_factor < 1 || f.turbulence_gain > 1)
+  const timing = f && f.control_timing
 
   return (
     <div className="readouts">
       <div className="ro-top">
         <Stat label="TRAIN SPEED" value={f ? f.speed_kmh.toFixed(0) : '—'} unit="km/h"
               warn={beyond} />
-        <Stat label="PINN INFERENCE" value={f ? f.pinn_latency_ms.toFixed(2) : '—'} unit="ms"
-              accent />
-        <Stat label="SETPOINT" value={f ? f.setpoint_N.toFixed(0) : '—'} unit="N" />
-        <Stat label="REGIME" value={beyond ? 'BEYOND' : 'VALIDATED'}
-              text warn={beyond} ok={!beyond} />
+        <Stat label="CONTROL P99" value={timing ? timing.latency_p99_ms.toFixed(2) : '—'} unit="ms"
+              warn={timing && timing.latency_p99_ms > timing.period_ms} />
+        <Stat label="DEADLINE MISS" value={timing ? timing.deadline_miss_pct.toFixed(1) : '—'} unit="%"
+              warn={timing && timing.deadline_miss_pct > 0} accent={timing && timing.deadline_miss_pct === 0} />
+        <Stat label="OPERATING POINT" value={f ? (f.operating_status ?? (beyond ? 'OUTSIDE_ENVELOPE' : 'NOMINAL')).replace('_', ' ') : '—'}
+              text warn={beyond} />
       </div>
 
       <div className="compare-card">
         <div className="compare-head">
-          <span>HEADLINE</span><span className="passive-h">PASSIVE</span><span className="aero-h">AeroPINN</span>
+          <span>HEADLINE</span><span className="passive-h">PASSIVE</span><span className="aero-h">AeroPINN*</span>
         </div>
         <CompareRow label="FORCE σ" pv={p ? p.std.toFixed(1) : '—'} av={a ? a.std.toFixed(1) : '—'} unit="N" />
         <CompareRow label="ARC TIME" pv={p ? p.arc_pct.toFixed(1) : '—'} av={a ? a.arc_pct.toFixed(1) : '—'} unit="%"
                     pDanger={p && p.arc_pct > 0.05} aDanger={a && a.arc_pct > 0.05} />
+        <div className="actuator-health mono" title="Actuator dynamics run in shadow until the controller is retrained with delay and bandwidth limits">
+          <span className="idealized">* IDEALIZED CONTROL</span>
+          <span>CMD <b>{Number.isFinite(a?.f_command) ? a.f_command.toFixed(0) : '—'} N</b></span>
+          <span>HW EST <b>{Number.isFinite(a?.f_actuator_estimate) ? a.f_actuator_estimate.toFixed(0) : '—'} N</b></span>
+        </div>
       </div>
     </div>
   )
 }
 
-function Stat({ label, value, unit, accent, warn, ok, text }) {
+function Stat({ label, value, unit, accent, warn, text }) {
   const cls = ['stat']
   if (accent) cls.push('accent')
   if (warn) cls.push('warn')
-  if (ok) cls.push('ok')
   return (
     <div className={cls.join(' ')}>
       <div className="stat-label">{label}</div>

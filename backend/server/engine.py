@@ -11,6 +11,7 @@ from collections import deque
 
 import numpy as np
 
+from backend.controller.actuator import ActuatorParams, ForceActuator
 from backend.controller.mpc import PINNMPCController
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
@@ -55,8 +56,19 @@ class Engine:
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
         self.state_p = self._equilibrium(speed_ms)
         self.state_a = self._equilibrium(speed_ms)
+        self.actuator = ForceActuator(dt, ActuatorParams())
+        startup_timing = self.predictor.benchmark_latency(
+            n_candidates=21, iters=100, deadline_ms=4.0
+        )
+        measured_period = 1.5e-3 * startup_timing["latency_ms_p99"]
+        control_period = max(4.0e-3, measured_period)
         self.controller = PINNMPCController(
-            self.predictor, self.dist, speed_ms, self.rp.beyond(), setpoint=self.setpoint
+            self.predictor,
+            self.dist,
+            speed_ms,
+            self.rp.beyond(),
+            setpoint=self.setpoint,
+            control_period=control_period,
         )
 
         n = int(window_s / dt)
@@ -65,6 +77,8 @@ class Engine:
         self.force_p = 0.0
         self.force_a = 0.0
         self.f_control = 0.0
+        self.f_command = 0.0
+        self.f_actuator_estimate = 0.0
         self.latency_ms = 0.0
         self.gust_decay = float(np.exp(-dt / 0.18))  # ~0.18 s gust time-constant
 
@@ -74,6 +88,7 @@ class Engine:
         self.step(int(0.5 / dt))
         self.fwin_p.clear()
         self.fwin_a.clear()
+        self.controller.reset_timing()
 
     def _equilibrium(self, speed_ms):
         from backend.sim.solver import static_equilibrium
@@ -108,7 +123,11 @@ class Engine:
             self.controller.speed_ms = speed_ms
             self.controller.beyond = beyond
 
-            self.f_control = self.controller(self.t, self.state_a, self.force_a)
+            self.f_command = self.controller(self.t, self.state_a, self.force_a)
+            # Live comparison remains the trained ideal-force model. The bounded
+            # actuator runs in shadow until the controller is retrained with its lag.
+            self.f_control = self.f_command
+            self.f_actuator_estimate = self.actuator.step(self.f_command)
             self.latency_ms = self.controller.last_latency_ms
 
             self.state_p = self._rk4(self.state_p, speed_ms, beyond, 0.0)
@@ -138,6 +157,7 @@ class Engine:
         beyond = self.rp.beyond()
         yw = float(self.dist.y_wire(self.t, speed_ms, beyond))
         mp, ma = self._metrics(self.fwin_p), self._metrics(self.fwin_a)
+        timing = self.controller.timing_metrics()
         s_wire = self.cat.s_wire_eff
         return {
             "t": round(self.t, 4),
@@ -147,6 +167,14 @@ class Engine:
             "gust_active": bool(self.rp.gust != 0.0),
             "wire_mm": round(1e3 * yw, 3),
             "setpoint_N": self.setpoint,
+            "operating_status": (
+                "OUTSIDE_ENVELOPE"
+                if self.rp.speed_kmh > 300
+                or self.rp.tension_factor < 1
+                or self.rp.turbulence_gain > 1
+                else "NOMINAL"
+            ),
+            "control_fidelity": "IDEALIZED_ACTUATION",
             # EN 50318 model terms exposed for the world-view physics overlay
             "kc": self.panto.kc,
             "f0_N": round(self.panto.F0, 1),
@@ -169,6 +197,23 @@ class Engine:
                 "std": round(ma["std"], 2),
                 "arc_pct": round(ma["arc_pct"], 2),
                 "f_control": round(self.f_control, 2),
+                "f_command": round(self.f_command, 2),
+                "f_actuator_estimate": round(self.f_actuator_estimate, 2),
             },
             "pinn_latency_ms": round(self.latency_ms, 3),
+            "control_timing": {
+                "period_ms": round(1e3 * self.controller.control_period, 3),
+                "latency_p95_ms": round(timing["latency_p95_ms"], 3),
+                "latency_p99_ms": round(timing["latency_p99_ms"], 3),
+                "deadline_miss_pct": round(timing["deadline_miss_pct"], 2),
+                "samples": timing["samples"],
+            },
+            "actuator": {
+                "mode": "SHADOW_ONLY",
+                "response_hz": self.actuator.params.response_hz,
+                "delay_ms": round(1e3 * self.actuator.params.transport_delay, 2),
+                "force_limit_N": self.actuator.params.force_limit,
+                "force_rate_limit_N_s": self.actuator.params.force_rate_limit,
+                "provenance": "mixed published/assumed",
+            },
         }

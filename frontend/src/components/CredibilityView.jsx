@@ -81,9 +81,9 @@ export default function CredibilityView({ onClose }) {
               <OverlayChart ov={ov} />
               <div className="cred-numbers">
                 <BigNum label="PREDICTION ERROR" value={ov.rmse_N.toFixed(2)} unit="N RMSE" accent />
-                <BigNum label="PINN INFERENCE" value={ov.pinn_latency_ms_single.toFixed(2)} unit="ms" accent />
+                <BigNum label="PINN P99" value={ov.pinn_latency_ms_p99.toFixed(2)} unit="ms" accent />
                 <BigNum label="SOLVER STEP" value={ov.solver_step_ms.toFixed(2)} unit="ms" />
-                <BigNum label="HORIZON" value={(ov.horizon_ms ?? 5).toFixed(0)} unit="ms ahead" />
+                <BigNum label="DEADLINE MISSES" value={ov.deadline_miss_pct.toFixed(1)} unit="% @ 4 ms" />
               </div>
             </> : <Loading />}
           </section>

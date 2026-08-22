@@ -11,6 +11,7 @@ aerodynamic force), emulating an active actuator.
 
 from __future__ import annotations
 
+from collections import deque
 import time
 
 import numpy as np
@@ -34,6 +35,7 @@ class PINNMPCController:
         control_period: float = 4.0e-3,
         w_effort: float = 1.0e-4,
         w_rate: float = 5.0e-4,
+        candidate_force_fn=None,
     ):
         self.pred = predictor
         self.dist = dist
@@ -45,11 +47,14 @@ class PINNMPCController:
         self.control_period = control_period
         self.w_effort = w_effort
         self.w_rate = w_rate
+        self.candidate_force_fn = candidate_force_fn
 
         self._last_fc = 0.0
         self._last_t = -1e9
         self._held = 0.0
-        self.last_latency_ms = 0.0  # inference time of the most recent re-optimisation
+        self.last_latency_ms = 0.0  # full time of the latest control update
+        self._latencies = deque(maxlen=500)
+        self._deadline_misses = deque(maxlen=500)
 
     def __call__(self, t: float, state, force: float) -> float:
         # Receding-horizon: only re-optimise every control_period; hold otherwise.
@@ -57,11 +62,15 @@ class PINNMPCController:
             return self._held
         self._last_t = t
 
+        t0 = time.perf_counter()
         fa = self.dist.aero_force(self.speed_ms, self.beyond)
         wf = _wire_features(self.dist, t, self.speed_ms, self.beyond)
-        t0 = time.perf_counter()
-        pred_force = self.pred.predict_force_candidates(state, self.candidates, fa, wf)
-        self.last_latency_ms = 1e3 * (time.perf_counter() - t0)
+        applied_candidates = (
+            self.candidates
+            if self.candidate_force_fn is None
+            else self.candidate_force_fn(self.candidates, self.pred.H)
+        )
+        pred_force = self.pred.predict_force_candidates(state, applied_candidates, fa, wf)
 
         cost = (
             (pred_force - self.setpoint) ** 2
@@ -69,6 +78,29 @@ class PINNMPCController:
             + self.w_rate * (self.candidates - self._last_fc) ** 2
         )
         best = float(self.candidates[int(np.argmin(cost))])
+        self.last_latency_ms = 1e3 * (time.perf_counter() - t0)
+        self._latencies.append(self.last_latency_ms)
+        self._deadline_misses.append(self.last_latency_ms > 1e3 * self.control_period)
         self._last_fc = best
         self._held = best
         return best
+
+    def timing_metrics(self) -> dict:
+        if not self._latencies:
+            return {
+                "latency_p95_ms": 0.0,
+                "latency_p99_ms": 0.0,
+                "deadline_miss_pct": 0.0,
+                "samples": 0,
+            }
+        values = np.fromiter(self._latencies, dtype=float)
+        return {
+            "latency_p95_ms": float(np.percentile(values, 95)),
+            "latency_p99_ms": float(np.percentile(values, 99)),
+            "deadline_miss_pct": 100.0 * float(np.mean(self._deadline_misses)),
+            "samples": len(values),
+        }
+
+    def reset_timing(self) -> None:
+        self._latencies.clear()
+        self._deadline_misses.clear()

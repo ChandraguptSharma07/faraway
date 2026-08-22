@@ -123,7 +123,7 @@ def _compute_overlay(speed_kmh: float):
 
     pred = get_predictor()
     ov = rollout_overlay(pred, speed_kmh=speed_kmh, duration=1.5, sample_dt=4.0e-3)
-    lat = pred.benchmark_latency()
+    lat = pred.benchmark_latency(n_candidates=21, deadline_ms=4.0)
     res = simulate(kmh_to_ms(speed_kmh), duration=1.5)
     out = {
         "speed_kmh": speed_kmh,
@@ -133,6 +133,9 @@ def _compute_overlay(speed_kmh: float):
         "rmse_N": round(ov["rmse_N"], 3),
         "pinn_latency_ms": round(lat["latency_ms_batch"], 4),
         "pinn_latency_ms_single": round(lat["latency_ms_single"], 4),
+        "pinn_latency_ms_p99": round(lat["latency_ms_p99"], 4),
+        "deadline_miss_pct": round(lat["deadline_miss_pct"], 2),
+        "control_deadline_ms": lat["deadline_ms"],
         "solver_step_ms": round(res.step_wall_ms, 4),
         "horizon_ms": round(ov["horizon_ms"], 1),
     }
@@ -210,7 +213,7 @@ async def ws(ws: WebSocket):
                 t0 = time.perf_counter()
                 # Run the heavy simulation step in a background thread
                 await asyncio.to_thread(engine.step, n_sub)
-                servo.send(engine.f_control)  # twitch the servo in sync (if present)
+                servo.send(engine.f_actuator_estimate)  # bounded hardware estimate
                 await ws.send_json(engine.frame())
                 await asyncio.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
         except WebSocketDisconnect:

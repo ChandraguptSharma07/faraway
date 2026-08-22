@@ -87,28 +87,43 @@ class PINNPredictor:
         )
 
     @torch.no_grad()
-    def benchmark_latency(self, n_candidates: int = 32, iters: int = 500) -> dict:
-        """Wall-clock inference latency (the headline number)."""
+    def benchmark_latency(
+        self,
+        n_candidates: int = 32,
+        iters: int = 250,
+        deadline_ms: float | None = None,
+    ) -> dict:
+        """Distribution of warm inference latency; averages alone hide deadline misses."""
         state4 = (0.05, 0.0, 0.04, 0.0)
         fcs = np.linspace(-80, 80, n_candidates).astype(np.float32)
         wf = (0.01, 0.1, 1.0)
         # warmup
         for _ in range(20):
             self.predict_force_candidates(state4, fcs, 8.0, wf)
-        t0 = time.perf_counter()
-        for _ in range(iters):
+        samples = np.empty(iters)
+        for i in range(iters):
+            t0 = time.perf_counter()
             self.predict_force_candidates(state4, fcs, 8.0, wf)
-        dt = (time.perf_counter() - t0) / iters
+            samples[i] = 1e3 * (time.perf_counter() - t0)
         # single-candidate timing
-        t0 = time.perf_counter()
-        for _ in range(iters):
+        single = np.empty(iters)
+        for i in range(iters):
+            t0 = time.perf_counter()
             self.predict_force_candidates(state4, fcs[:1], 8.0, wf)
-        dt1 = (time.perf_counter() - t0) / iters
-        return {
-            "latency_ms_single": 1e3 * dt1,
-            "latency_ms_batch": 1e3 * dt,
+            single[i] = 1e3 * (time.perf_counter() - t0)
+        result = {
+            "latency_ms_single": float(np.mean(single)),
+            "latency_ms_batch": float(np.mean(samples)),
+            "latency_ms_p50": float(np.percentile(samples, 50)),
+            "latency_ms_p95": float(np.percentile(samples, 95)),
+            "latency_ms_p99": float(np.percentile(samples, 99)),
+            "latency_ms_max": float(np.max(samples)),
             "n_candidates": n_candidates,
         }
+        if deadline_ms is not None:
+            result["deadline_ms"] = deadline_ms
+            result["deadline_miss_pct"] = 100.0 * float(np.mean(samples > deadline_ms))
+        return result
 
 
 def rollout_overlay(
