@@ -3,6 +3,7 @@ import {
   archiveJourney,
   deleteJourney,
   fetchJourneys,
+  fetchJourneyRecords,
   journeyExportUrl,
   updateJourneyMetadata,
 } from '../lib/api'
@@ -41,6 +42,9 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
   const [status, setStatus] = useState('Loading journey catalogue…')
   const [deleteMode, setDeleteMode] = useState(false)
   const [deleteConfirmation, setDeleteConfirmation] = useState('')
+  const [recordPage, setRecordPage] = useState(null)
+  const [recordQuery, setRecordQuery] = useState(null)
+  const [recordHistory, setRecordHistory] = useState([])
 
   const selected = useMemo(
     () => journeys.find((journey) => journey.id === selectedId) ?? journeys[0],
@@ -107,6 +111,23 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
     setForm(journey.metadata)
     setDeleteMode(false)
     setDeleteConfirmation('')
+    setRecordPage(null)
+    setRecordQuery(null)
+    setRecordHistory([])
+  }
+
+  const viewRecords = async (query, cursor = 0, history = []) => {
+    if (!selected) return
+    setStatus(`Loading ${query.label.toLowerCase()}…`)
+    try {
+      const page = await fetchJourneyRecords(selected.id, { ...query, cursor })
+      setRecordQuery(query)
+      setRecordPage(page)
+      setRecordHistory(history)
+      setStatus(`${page.records.length} ${query.label.toLowerCase()} loaded.`)
+    } catch (error) {
+      setStatus(String(error))
+    }
   }
 
   const saveMetadata = async (event) => {
@@ -196,12 +217,54 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
                   <Fact label="Samples" value={selected.sample_count} />
                   <Fact label="Events" value={selected.event_count} />
                   <Fact label="Distance" value={`${selected.summary.distance_km ?? 0} km`} />
+                  <Fact label="Stored data" value={formatBytes(selected.storage?.total_bytes ?? 0)} />
+                  <Fact
+                    label="Command-limit duty"
+                    value={`${selected.summary.controller?.command_limit_duty_pct ?? 0}%`}
+                  />
                 </dl>
                 <ForceSummary summary={selected.summary} />
               </section>
 
+              <section aria-labelledby="records-heading">
+                <h3 id="records-heading">VIEW LOGGED DATA</h3>
+                <p className="journey-help">
+                  Browse bounded text pages without loading the complete journey into this device.
+                </p>
+                <div className="journey-view-actions" role="group" aria-label="Choose log data to view">
+                  {RECORD_VIEWS.map((query) => (
+                    <button
+                      key={query.label}
+                      onClick={() => viewRecords(query)}
+                      aria-pressed={recordQuery?.label === query.label}
+                    >
+                      {query.label}
+                    </button>
+                  ))}
+                </div>
+                {recordPage && <RecordBrowser
+                  page={recordPage}
+                  label={recordQuery.label}
+                  canGoBack={recordHistory.length > 0}
+                  onBack={() => {
+                    const previous = recordHistory[recordHistory.length - 1]
+                    viewRecords(recordQuery, previous, recordHistory.slice(0, -1))
+                  }}
+                  onNext={() => viewRecords(
+                    recordQuery,
+                    recordPage.next_cursor,
+                    [...recordHistory, recordPage.cursor],
+                  )}
+                />}
+              </section>
+
               <section aria-labelledby="export-heading">
                 <h3 id="export-heading">DOWNLOAD DATA</h3>
+                <ul className="export-guide">
+                  <li><b>CSV:</b> flat telemetry for spreadsheets and analysis tools.</li>
+                  <li><b>JSON:</b> complete nested journey, event, and telemetry records.</li>
+                  <li><b>Audit package:</b> both formats plus summary, data dictionary, manifest, and integrity hashes.</li>
+                </ul>
                 <div className="journey-downloads">
                   {['csv', 'json', 'audit'].map((format) => (
                     <a
@@ -280,4 +343,72 @@ function ForceSummary({ summary }) {
       </tbody>
     </table>
   )
+}
+
+const RECORD_VIEWS = [
+  { label: 'EVENTS', source: 'events' },
+  { label: 'PHYSICS 1 KHZ', source: 'telemetry', stream: 'physics_audit_1khz' },
+  { label: 'DASHBOARD FRAMES', source: 'telemetry', stream: 'dashboard_frame_30hz' },
+]
+
+function RecordBrowser({ page, label, canGoBack, onBack, onNext }) {
+  return (
+    <div className="record-browser" aria-live="polite">
+      <div className="record-browser-heading">
+        <b>{label}</b>
+        <span className="mono">Page offset {page.cursor.toLocaleString()} bytes</span>
+      </div>
+      {page.records.length === 0 ? <p>No records in this page.</p> : (
+        <ol className="record-list">
+          {page.records.map((record, index) => (
+            <RecordItem key={`${record.recorded_at}-${index}`} record={record} />
+          ))}
+        </ol>
+      )}
+      <div className="record-pagination" aria-label="Log page navigation">
+        <button disabled={!canGoBack} onClick={onBack}>PREVIOUS PAGE</button>
+        <button disabled={page.next_cursor == null} onClick={onNext}>NEXT PAGE</button>
+      </div>
+    </div>
+  )
+}
+
+function RecordItem({ record }) {
+  const physics = record.physics
+  const telemetry = record.telemetry
+  const simulationTime = physics?.t_s ?? telemetry?.t ?? record.details?.simulation_t_s
+  const title = record.event_type ?? (
+    record.stream === 'physics_audit_1khz' ? 'Physics sample' : 'Dashboard frame'
+  )
+  return (
+    <li>
+      <div className="record-summary">
+        <b>{title}</b>
+        <span className="mono">Simulation {simulationTime ?? '—'} s</span>
+        <span>{new Date(record.recorded_at).toLocaleString()}</span>
+      </div>
+      {physics && <dl className="record-metrics">
+        <Fact label="Speed" value={`${physics.speed_kmh} km/h`} />
+        <Fact label="Passive force" value={`${physics.passive.contact_force_N.toFixed(2)} N`} />
+        <Fact label="AeroPINN force" value={`${physics.aeropinn.contact_force_N.toFixed(2)} N`} />
+        <Fact label="Command" value={`${physics.aeropinn.command_force_N.toFixed(2)} N`} />
+      </dl>}
+      <details>
+        <summary>View complete raw record</summary>
+        <pre>{JSON.stringify(record, null, 2)}</pre>
+      </details>
+    </li>
+  )
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let index = 0
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024
+    index += 1
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`
 }

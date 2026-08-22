@@ -323,97 +323,272 @@ class JourneyStore:
             journey = self._serialize(row, include_paths=True)
         telemetry_path = Path(journey.pop("telemetry_file"))
         events_path = Path(journey.pop("events_file"))
-        records = self._read_ndjson(telemetry_path)
-        events = self._read_ndjson(events_path)
+        telemetry_size = telemetry_path.stat().st_size if telemetry_path.exists() else 0
+        events_size = events_path.stat().st_size if events_path.exists() else 0
         if kind == "csv":
             destination = self.export_dir / f"{journey_id}.telemetry.csv"
-            self._write_csv(records, destination)
+            self._write_csv_snapshot(telemetry_path, telemetry_size, destination)
             return destination, "text/csv"
         if kind == "json":
             destination = self.export_dir / f"{journey_id}.journey.json"
-            destination.write_text(json.dumps({
-                "schema_version": SCHEMA_VERSION,
-                "journey": journey,
-                "events": events,
-                "telemetry": records,
-            }, indent=2), encoding="utf-8")
+            self._write_json_export(
+                destination,
+                journey,
+                telemetry_path,
+                telemetry_size,
+                events_path,
+                events_size,
+            )
             return destination, "application/json"
 
-        return self._write_audit_package(journey_id, journey, records, events)
+        return self._write_audit_package(
+            journey_id,
+            journey,
+            telemetry_path,
+            telemetry_size,
+            events_path,
+            events_size,
+        )
+
+    def page(
+        self,
+        journey_id: str,
+        source: str,
+        cursor: int = 0,
+        limit: int = 25,
+        stream: str | None = None,
+    ) -> dict:
+        """Read a bounded NDJSON page using byte cursors, never whole-file loading."""
+        if source not in {"telemetry", "events"}:
+            raise ValueError("source must be telemetry or events")
+        if cursor < 0:
+            raise ValueError("cursor cannot be negative")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if stream not in {None, "physics_audit_1khz", "dashboard_frame_30hz"}:
+            raise ValueError("unsupported telemetry stream")
+        if source == "events" and stream is not None:
+            raise ValueError("stream filtering only applies to telemetry")
+
+        with self._lock:
+            row = self._row(journey_id)
+            path = Path(row[f"{source}_file"])
+        size = path.stat().st_size if path.exists() else 0
+        if cursor > size:
+            raise ValueError("cursor is beyond the current log snapshot")
+
+        records: list[dict] = []
+        next_cursor: int | None = None
+        if path.exists():
+            with path.open("rb") as handle:
+                handle.seek(cursor)
+                if cursor:
+                    handle.seek(cursor - 1)
+                    if handle.read(1) != b"\n":
+                        handle.readline()
+                while handle.tell() < size and len(records) < limit:
+                    raw = handle.readline()
+                    if not raw or handle.tell() > size:
+                        break
+                    record = json.loads(raw)
+                    if stream is None or record.get("stream") == stream:
+                        records.append(record)
+                if handle.tell() < size:
+                    next_cursor = handle.tell()
+        return {
+            "journey_id": journey_id,
+            "source": source,
+            "stream": stream,
+            "cursor": cursor,
+            "next_cursor": next_cursor,
+            "snapshot_bytes": size,
+            "records": records,
+        }
 
     def _write_audit_package(
-        self, journey_id: str, journey: dict, records: list[dict], events: list[dict]
+        self,
+        journey_id: str,
+        journey: dict,
+        telemetry_path: Path,
+        telemetry_size: int,
+        events_path: Path,
+        events_size: int,
     ) -> tuple[Path, str]:
-        work = self.export_dir / f"{journey_id}.work"
-        if work.exists():
-            shutil.rmtree(work)
+        export_token = uuid.uuid4().hex
+        work = self.export_dir / f"{journey_id}.{export_token}.work"
         work.mkdir()
-        telemetry_csv = work / "telemetry.csv"
-        physics_csv = work / "physics_1khz.csv"
-        dashboard_csv = work / "dashboard_30hz.csv"
-        events_csv = work / "events.csv"
-        self._write_csv(records, telemetry_csv)
-        self._write_csv(
-            [record for record in records if record.get("stream") == "physics_audit_1khz"],
-            physics_csv,
-        )
-        self._write_csv(
-            [record for record in records if record.get("stream") == "dashboard_frame_30hz"],
-            dashboard_csv,
-        )
-        self._write_csv(events, events_csv)
-        (work / "telemetry.json").write_text(json.dumps(records, indent=2), encoding="utf-8")
-        (work / "events.json").write_text(json.dumps(events, indent=2), encoding="utf-8")
-        (work / "summary.json").write_text(
-            json.dumps(journey["summary"], indent=2), encoding="utf-8"
-        )
-        fields = sorted({key for record in records for key in _flatten(record)})
-        dictionary = "# Telemetry data dictionary\n\n"
-        dictionary += "All timestamps are ISO 8601 UTC. Dotted names represent nested JSON fields.\n\n"
-        dictionary += "| Field | Meaning |\n|---|---|\n"
-        dictionary += "".join(
-            f"| `{field}` | {_describe_field(field)} |\n" for field in fields
-        )
-        (work / "data_dictionary.md").write_text(dictionary, encoding="utf-8")
-        (work / "README.md").write_text(
-            "# AeroPINN journey audit package\n\n"
-            "Persistent simulation telemetry for asynchronous, screen-reader-compatible review.\n"
-            "The manifest records provenance and integrity hashes. CSV files provide flat tables; "
-            "JSON files preserve complete nested telemetry. The physics and dashboard CSV files "
-            "separate native 1 kHz audit samples from complete 30 Hz UI frames.\n",
-            encoding="utf-8",
-        )
+        destination = self.export_dir / f"{journey_id}.audit.zip"
+        partial = self.export_dir / f"{journey_id}.{export_token}.audit.partial"
         manifest = {
             "schema_version": SCHEMA_VERSION,
             "generated_at": _utc_now(),
             "journey": journey,
             "files": {},
         }
-        for path in work.iterdir():
-            manifest["files"][path.name] = {"sha256": _sha256(path), "bytes": path.stat().st_size}
-        (work / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-        destination = self.export_dir / f"{journey_id}.audit.zip"
-        with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for path in sorted(work.iterdir()):
-                archive.write(path, path.name)
-        shutil.rmtree(work)
+
+        try:
+            with zipfile.ZipFile(
+                partial, "w", compression=zipfile.ZIP_DEFLATED
+            ) as archive:
+                def add(path: Path) -> None:
+                    manifest["files"][path.name] = {
+                        "sha256": _sha256(path),
+                        "bytes": path.stat().st_size,
+                    }
+                    archive.write(path, path.name)
+                    path.unlink()
+
+                generated = work / "telemetry.csv"
+                self._write_csv_snapshot(telemetry_path, telemetry_size, generated)
+                add(generated)
+                generated = work / "physics_1khz.csv"
+                self._write_csv_snapshot(
+                    telemetry_path,
+                    telemetry_size,
+                    generated,
+                    stream="physics_audit_1khz",
+                )
+                add(generated)
+                generated = work / "dashboard_30hz.csv"
+                self._write_csv_snapshot(
+                    telemetry_path,
+                    telemetry_size,
+                    generated,
+                    stream="dashboard_frame_30hz",
+                )
+                add(generated)
+                generated = work / "events.csv"
+                self._write_csv_snapshot(events_path, events_size, generated)
+                add(generated)
+                generated = work / "telemetry.json"
+                self._write_json_array(generated, telemetry_path, telemetry_size)
+                add(generated)
+                generated = work / "events.json"
+                self._write_json_array(generated, events_path, events_size)
+                add(generated)
+
+                small_files = {
+                    "summary.json": json.dumps(journey["summary"], indent=2),
+                    "README.md": (
+                        "# AeroPINN journey audit package\n\n"
+                        "Persistent simulation telemetry for asynchronous, screen-reader-compatible review.\n"
+                        "The manifest records provenance and integrity hashes. CSV files provide flat tables; "
+                        "JSON files preserve complete nested telemetry. The physics and dashboard CSV files "
+                        "separate native 1 kHz audit samples from complete 30 Hz UI frames.\n"
+                    ),
+                }
+                fields = self._snapshot_fields(telemetry_path, telemetry_size)
+                small_files["data_dictionary.md"] = (
+                    "# Telemetry data dictionary\n\n"
+                    "All timestamps are ISO 8601 UTC. Dotted names represent nested JSON fields.\n\n"
+                    "| Field | Meaning |\n|---|---|\n"
+                    + "".join(
+                        f"| `{field}` | {_describe_field(field)} |\n"
+                        for field in fields
+                    )
+                )
+                for name, content in small_files.items():
+                    generated = work / name
+                    generated.write_text(content, encoding="utf-8")
+                    add(generated)
+                archive.writestr(
+                    "manifest.json", json.dumps(manifest, indent=2)
+                )
+            partial.replace(destination)
+        except Exception:
+            partial.unlink(missing_ok=True)
+            raise
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         return destination, "application/zip"
 
     @staticmethod
-    def _read_ndjson(path: Path) -> list[dict]:
+    def _iter_ndjson(path: Path, snapshot_bytes: int | None = None):
         if not path.exists():
-            return []
-        with path.open(encoding="utf-8") as source:
-            return [json.loads(line) for line in source if line.strip()]
+            return
+        boundary = path.stat().st_size if snapshot_bytes is None else snapshot_bytes
+        with path.open("rb") as source:
+            while source.tell() < boundary:
+                line = source.readline()
+                if not line or source.tell() > boundary:
+                    break
+                if line.strip():
+                    yield json.loads(line)
 
     @staticmethod
-    def _write_csv(records: list[dict], destination: Path) -> None:
-        flattened = [_flatten(record) for record in records]
-        fields = sorted({key for record in flattened for key in record})
+    def _read_ndjson(path: Path) -> list[dict]:
+        return list(JourneyStore._iter_ndjson(path))
+
+    @staticmethod
+    def _snapshot_fields(
+        path: Path,
+        snapshot_bytes: int,
+        stream: str | None = None,
+    ) -> list[str]:
+        fields: set[str] = set()
+        for record in JourneyStore._iter_ndjson(path, snapshot_bytes):
+            if stream is None or record.get("stream") == stream:
+                fields.update(_flatten(record))
+        return sorted(fields)
+
+    @staticmethod
+    def _write_csv_snapshot(
+        source: Path,
+        snapshot_bytes: int,
+        destination: Path,
+        stream: str | None = None,
+    ) -> None:
+        fields = JourneyStore._snapshot_fields(source, snapshot_bytes, stream)
         with destination.open("w", encoding="utf-8", newline="") as output:
             writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(flattened)
+            for record in JourneyStore._iter_ndjson(source, snapshot_bytes):
+                if stream is None or record.get("stream") == stream:
+                    writer.writerow(_flatten(record))
+
+    @staticmethod
+    def _write_json_array(
+        destination: Path,
+        source: Path,
+        snapshot_bytes: int,
+    ) -> None:
+        with destination.open("w", encoding="utf-8") as output:
+            output.write("[\n")
+            first = True
+            for record in JourneyStore._iter_ndjson(source, snapshot_bytes):
+                if not first:
+                    output.write(",\n")
+                json.dump(record, output, separators=(",", ":"))
+                first = False
+            output.write("\n]\n")
+
+    @staticmethod
+    def _write_json_export(
+        destination: Path,
+        journey: dict,
+        telemetry_path: Path,
+        telemetry_size: int,
+        events_path: Path,
+        events_size: int,
+    ) -> None:
+        with destination.open("w", encoding="utf-8") as output:
+            output.write('{"schema_version":')
+            json.dump(SCHEMA_VERSION, output)
+            output.write(',"journey":')
+            json.dump(journey, output, separators=(",", ":"))
+            for name, path, size in (
+                ("events", events_path, events_size),
+                ("telemetry", telemetry_path, telemetry_size),
+            ):
+                output.write(f',"{name}":[')
+                first = True
+                for record in JourneyStore._iter_ndjson(path, size):
+                    if not first:
+                        output.write(",")
+                    json.dump(record, output, separators=(",", ":"))
+                    first = False
+                output.write("]")
+            output.write("}\n")
 
     def _row(self, journey_id: str) -> sqlite3.Row:
         row = self._connection.execute(
@@ -425,6 +600,10 @@ class JourneyStore:
 
     @staticmethod
     def _serialize(row: sqlite3.Row, include_paths: bool) -> dict:
+        telemetry_path = Path(row["telemetry_file"])
+        events_path = Path(row["events_file"])
+        telemetry_bytes = telemetry_path.stat().st_size if telemetry_path.exists() else 0
+        events_bytes = events_path.stat().st_size if events_path.exists() else 0
         output = {
             "id": row["id"],
             "started_at": row["started_at"],
@@ -435,6 +614,11 @@ class JourneyStore:
             "summary": json.loads(row["summary_json"]),
             "sample_count": row["sample_count"],
             "event_count": row["event_count"],
+            "storage": {
+                "telemetry_bytes": telemetry_bytes,
+                "events_bytes": events_bytes,
+                "total_bytes": telemetry_bytes + events_bytes,
+            },
             "schema_version": row["schema_version"],
         }
         if include_paths:

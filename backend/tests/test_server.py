@@ -4,8 +4,10 @@ import json
 
 import numpy as np
 
+import backend.server.app as app_module
 from backend.server.engine import Engine
 from backend.server.app import physical_calibration_status
+from backend.server.journeys import JourneyStore
 from backend.sim.parameters import kmh_to_ms
 
 
@@ -47,6 +49,26 @@ def test_engine_emits_one_native_rate_audit_sample_per_step():
     assert np.isclose(samples[-1]["t_s"], e.t)
     assert "contact_force_N" in samples[-1]["passive"]
     assert samples[-1]["timing"]["control_authority_N"] == 25.0
+
+
+def test_records_endpoint_pages_persistent_events(tmp_path, monkeypatch):
+    store = JourneyStore(tmp_path)
+    journey = store.create()
+    journey.event("ACCESSIBILITY_REVIEW", {"result": "ready"})
+    journey.finalize()
+    monkeypatch.setattr(app_module, "_journey_store", store)
+
+    payload = app_module.get_journey_records(
+        journey.id,
+        source="events",
+        limit=1,
+    )
+    assert payload["records"][0]["event_type"] == "ACCESSIBILITY_REVIEW"
+    assert payload["snapshot_bytes"] > 0
+    assert any(
+        route.path == "/api/journeys/{journey_id}/records"
+        for route in app_module.app.routes
+    )
 
 
 def test_controller_fails_safe_outside_pinn_training_support():

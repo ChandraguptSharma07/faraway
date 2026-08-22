@@ -36,6 +36,18 @@ export async function fetchJourneys(includeArchived = false) {
   return r.json()
 }
 
+export async function fetchJourneyRecords(id, options = {}) {
+  const params = new URLSearchParams({
+    source: options.source ?? 'events',
+    cursor: String(options.cursor ?? 0),
+    limit: String(options.limit ?? 25),
+  })
+  if (options.stream) params.set('stream', options.stream)
+  const r = await fetch(`${BASE}/api/journeys/${id}/records?${params}`)
+  if (!r.ok) throw new Error('journey record fetch failed')
+  return r.json()
+}
+
 export async function updateJourneyMetadata(id, metadata) {
   const r = await fetch(`${BASE}/api/journeys/${id}/metadata`, {
     method: 'PATCH',

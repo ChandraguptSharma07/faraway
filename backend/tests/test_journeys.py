@@ -44,6 +44,7 @@ def test_journey_persists_metadata_telemetry_events_and_summary(tmp_path):
     assert saved["metadata"]["track"] == "2"
     assert saved["sample_count"] == 2
     assert saved["event_count"] >= 3
+    assert saved["storage"]["total_bytes"] > 0
     assert saved["summary"]["lanes"]["passive"]["contact_loss_pct"] == 50.0
 
     path, media_type = store.export(journey.id, "json")
@@ -150,3 +151,52 @@ def test_actuator_saturation_events_require_dwell_and_hysteresis(tmp_path):
     event_types = [event["event_type"] for event in events]
     assert event_types.count("ACTUATOR_SATURATION_START") == 1
     assert event_types.count("ACTUATOR_SATURATION_END") == 1
+
+
+def test_record_pages_use_bounded_byte_cursors(tmp_path):
+    store = JourneyStore(tmp_path)
+    journey = store.create()
+    journey.record(frame(0.0))
+    journey.record(frame(0.1, gust=True))
+    journey.event("OPERATOR_NOTE", {"text": "inspect this point"})
+
+    first = store.page(
+        journey.id,
+        "telemetry",
+        limit=1,
+        stream="dashboard_frame_30hz",
+    )
+    assert len(first["records"]) == 1
+    assert first["next_cursor"] is not None
+    second = store.page(
+        journey.id,
+        "telemetry",
+        cursor=first["next_cursor"],
+        limit=1,
+        stream="dashboard_frame_30hz",
+    )
+    assert second["records"][0]["telemetry"]["t"] == 0.1
+    assert second["next_cursor"] is None
+
+    events = store.page(journey.id, "events", limit=10)
+    assert events["records"][-1]["event_type"] == "OPERATOR_NOTE"
+    journey.finalize()
+
+
+def test_exports_stream_without_materializing_full_ndjson(tmp_path, monkeypatch):
+    store = JourneyStore(tmp_path)
+    journey = store.create()
+    journey.record(frame())
+    journey.finalize()
+
+    monkeypatch.setattr(
+        JourneyStore,
+        "_read_ndjson",
+        staticmethod(lambda _path: (_ for _ in ()).throw(AssertionError("full read"))),
+    )
+    csv_path, _ = store.export(journey.id, "csv")
+    json_path, _ = store.export(journey.id, "json")
+    package, _ = store.export(journey.id, "audit")
+    assert csv_path.stat().st_size > 0
+    assert json.loads(json_path.read_text())["telemetry"]
+    assert zipfile.is_zipfile(package)

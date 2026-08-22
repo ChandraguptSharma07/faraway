@@ -199,6 +199,25 @@ def get_journey(journey_id: str):
         raise HTTPException(status_code=404, detail="journey not found") from exc
 
 
+@app.get("/api/journeys/{journey_id}/records")
+def get_journey_records(
+    journey_id: str,
+    source: str = "events",
+    cursor: int = 0,
+    limit: int = 25,
+    stream: str | None = None,
+):
+    """Bounded text view over persistent logs; byte cursors scale to large journeys."""
+    try:
+        return get_journey_store().page(
+            journey_id, source, cursor=cursor, limit=limit, stream=stream
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="journey not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.patch("/api/journeys/{journey_id}/metadata")
 def update_journey_metadata(journey_id: str, changes: dict):
     try:

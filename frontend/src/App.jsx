@@ -12,7 +12,9 @@ const JourneyLogs = lazy(() => import('./components/JourneyLogs'))
 export default function App() {
   const { frameRef, historyRef, connected, currentJourney, send } = useTelemetry()
   const [showCred, setShowCred] = useState(false)
-  const [showJourneys, setShowJourneys] = useState(false)
+  const [showJourneys, setShowJourneys] = useState(
+    () => new URLSearchParams(window.location.search).get('view') === 'journeys',
+  )
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [showPhysics, setShowPhysics] = useState(true)
   const [amplifyMotion, setAmplifyMotion] = useState(false)
@@ -34,7 +36,11 @@ export default function App() {
           <span className="brand-sub">active pantograph stabilization · PINN-MPC</span>
         </div>
         <div className="topbar-right">
-          <button className="journey-trigger" onClick={() => setShowJourneys(true)}>
+          <button
+            className="journey-trigger"
+            onClick={() => setShowJourneys(true)}
+            aria-haspopup="dialog"
+          >
             JOURNEY LOGS
           </button>
           <button className="cred-trigger" onClick={() => setShowCred(true)}>
