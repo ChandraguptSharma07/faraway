@@ -26,6 +26,18 @@ failed gates instead of being presented as railway validation.
 See [the real-system calibration contract](docs/REAL_SYSTEM_CALIBRATION.md) for the
 measured data and blind-validation ladder required before route-specific claims.
 
+## Accessible journey audits
+
+Every simulation journey is logged automatically on the backend. The **Journey Logs**
+view provides a keyboard- and screen-reader-usable catalogue, text summaries, detailed
+train/route/location documentation, and CSV, JSON, or complete ZIP audit exports. Logs
+persist across restarts; interrupted runs remain recoverable. A deterministic high-wind
+sample is generated through the same Engine path used by the live dashboard.
+
+See [the journey data accessibility workflow](docs/JOURNEY_DATA_ACCESSIBILITY.md) for
+the lifecycle, schema, export contents and API. Set `AEROPINN_DATA_DIR` to move the
+persistent store from its default `data/journeys/` location.
+
 ## Architecture
 
 ```

@@ -36,6 +36,17 @@ def test_frame_is_json_serializable_after_gust():
     for _ in range(20):
         e.step(20)
         json.dumps(e.frame())  # would raise TypeError on numpy bool/float
+        json.dumps(e.audit_sample())
+
+
+def test_engine_emits_one_native_rate_audit_sample_per_step():
+    e = Engine()
+    samples = []
+    e.step(3, audit_callback=samples.append)
+    assert len(samples) == 3
+    assert np.isclose(samples[-1]["t_s"], e.t)
+    assert "contact_force_N" in samples[-1]["passive"]
+    assert samples[-1]["timing"]["control_authority_N"] == 25.0
 
 
 def test_physical_calibration_status_blocks_unsupported_claims():

@@ -28,6 +28,7 @@ export function useTelemetry() {
   const historyRef = useRef({ t: [], fp: [], fa: [], lostP: [], lostA: [] })
   const wsRef = useRef(null)
   const [connected, setConnected] = useState(false)
+  const [currentJourney, setCurrentJourney] = useState(null)
 
   useEffect(() => {
     let alive = true
@@ -45,6 +46,9 @@ export function useTelemetry() {
       ws.onerror = () => ws.close()
       ws.onmessage = (e) => {
         const f = JSON.parse(e.data)
+        setCurrentJourney((previous) => (
+          previous?.id === f.journey?.id ? previous : (f.journey ?? null)
+        ))
         frameRef.current = f
         const h = historyRef.current
         h.t.push(f.t)
@@ -71,5 +75,5 @@ export function useTelemetry() {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
   }
 
-  return { frameRef, historyRef, connected, send }
+  return { frameRef, historyRef, connected, currentJourney, send }
 }

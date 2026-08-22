@@ -30,6 +30,39 @@ export async function fetchModalCalibration() {
   return r.json()
 }
 
+export async function fetchJourneys(includeArchived = false) {
+  const r = await fetch(`${BASE}/api/journeys?include_archived=${includeArchived}`)
+  if (!r.ok) throw new Error('journey catalogue fetch failed')
+  return r.json()
+}
+
+export async function updateJourneyMetadata(id, metadata) {
+  const r = await fetch(`${BASE}/api/journeys/${id}/metadata`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(metadata),
+  })
+  if (!r.ok) throw new Error('journey metadata update failed')
+  return r.json()
+}
+
+export async function archiveJourney(id) {
+  const r = await fetch(`${BASE}/api/journeys/${id}/archive`, { method: 'POST' })
+  if (!r.ok) throw new Error('journey archive failed')
+  return r.json()
+}
+
+export async function deleteJourney(id, confirmation) {
+  const r = await fetch(`${BASE}/api/journeys/${id}?confirm=${encodeURIComponent(confirmation)}`, {
+    method: 'DELETE',
+  })
+  if (!r.ok) throw new Error('journey deletion failed')
+}
+
+export function journeyExportUrl(id, format) {
+  return `${BASE}/api/journeys/${id}/export?format=${format}`
+}
+
 const METRIC_LABELS = {
   mean_N: 'Mean force Fm',
   std_N: 'Std deviation',

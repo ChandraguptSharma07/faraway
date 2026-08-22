@@ -7,10 +7,12 @@ import Controls from './components/Controls'
 
 const World3D = lazy(() => import('./components/World3D'))
 const CredibilityView = lazy(() => import('./components/CredibilityView'))
+const JourneyLogs = lazy(() => import('./components/JourneyLogs'))
 
 export default function App() {
-  const { frameRef, historyRef, connected, send } = useTelemetry()
+  const { frameRef, historyRef, connected, currentJourney, send } = useTelemetry()
   const [showCred, setShowCred] = useState(false)
+  const [showJourneys, setShowJourneys] = useState(false)
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [showPhysics, setShowPhysics] = useState(true)
   const [amplifyMotion, setAmplifyMotion] = useState(false)
@@ -32,6 +34,9 @@ export default function App() {
           <span className="brand-sub">active pantograph stabilization · PINN-MPC</span>
         </div>
         <div className="topbar-right">
+          <button className="journey-trigger" onClick={() => setShowJourneys(true)}>
+            JOURNEY LOGS
+          </button>
           <button className="cred-trigger" onClick={() => setShowCred(true)}>
             VALIDATION
           </button>
@@ -95,6 +100,14 @@ export default function App() {
       {showCred && (
         <Suspense fallback={null}>
           <CredibilityView onClose={() => setShowCred(false)} />
+        </Suspense>
+      )}
+      {showJourneys && (
+        <Suspense fallback={null}>
+          <JourneyLogs
+            activeJourneyId={currentJourney?.id}
+            onClose={() => setShowJourneys(false)}
+          />
         </Suspense>
       )}
     </div>

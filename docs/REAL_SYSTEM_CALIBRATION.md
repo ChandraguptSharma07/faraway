@@ -4,8 +4,7 @@
 
 AeroPINN is a research simulation with EN 50318 reference-range checks. It is not
 yet a route-identified digital twin, hardware validation, railway certification, or
-safety function. The Lastochka GLB supplies visual geometry only. No CHS2 or
-Lastochka measurement dataset is present in this repository, so train-specific
+safety function. The Lastochka GLB supplies visual geometry only; train-specific
 physical parameters must not be inferred from the mesh.
 
 The next milestone is an identified baseline dataset. Model complexity should only

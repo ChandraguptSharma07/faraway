@@ -11,6 +11,7 @@ __pycache__/
 venv/
 .pytest_cache/
 .mypy_cache/
+/data/
 
 # PyTorch / training scratch (keep the small final model under backend/pinn/)
 *.tmp.pt

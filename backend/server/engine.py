@@ -305,7 +305,7 @@ class Engine:
         wire.commit(preview, force, speed_ms)
         return next_state, force
 
-    def step(self, n_steps: int = 1):
+    def step(self, n_steps: int = 1, audit_callback=None):
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
         for _ in range(n_steps):
             self._sync_catenary_tension()
@@ -400,6 +400,61 @@ class Engine:
                 self.rp.gust *= self.gust_decay
                 if abs(self.rp.gust) < 0.5:
                     self.rp.gust = 0.0
+            if audit_callback is not None:
+                audit_callback(self.audit_sample())
+
+    def audit_sample(self) -> dict:
+        """Compact native-rate evidence without constructing the heavy UI frame."""
+        return {
+            "t_s": round(self.t, 6),
+            "speed_kmh": round(self.rp.speed_kmh, 3),
+            "tension_factor": round(self.rp.tension_factor, 4),
+            "turbulence_gain": round(self.rp.turbulence_gain, 4),
+            "gust_force_N": round(self.rp.gust, 4),
+            "passive": {
+                "head_position_m": float(self.state_p[0]),
+                "head_velocity_m_s": float(self.state_p[1]),
+                "frame_position_m": float(self.state_p[2]),
+                "frame_velocity_m_s": float(self.state_p[3]),
+                "contact_force_N": float(self.force_p),
+                "contact_lost": bool(self.force_p <= 0.0),
+                "wire_ripple_m": self.wire_p.contact_displacement(),
+                "wire_velocity_m_s": self.wire_p.contact_velocity(),
+                "coupling_residual_N": self.wire_p.last_coupling_residual,
+            },
+            "aeropinn": {
+                "head_position_m": float(self.state_a[0]),
+                "head_velocity_m_s": float(self.state_a[1]),
+                "frame_position_m": float(self.state_a[2]),
+                "frame_velocity_m_s": float(self.state_a[3]),
+                "contact_force_N": float(self.force_a),
+                "contact_lost": bool(self.force_a <= 0.0),
+                "command_force_N": float(self.f_command),
+                "applied_force_N": float(self.f_control),
+                "actuator_estimate_N": float(self.f_actuator_estimate),
+                "wire_ripple_m": self.wire_a.contact_displacement(),
+                "wire_velocity_m_s": self.wire_a.contact_velocity(),
+                "coupling_residual_N": self.wire_a.last_coupling_residual,
+            },
+            "estimator": {
+                "head_position_m": float(self.observer.state[0]),
+                "head_velocity_m_s": float(self.observer.state[1]),
+                "frame_position_m": float(self.observer.state[2]),
+                "frame_velocity_m_s": float(self.observer.state[3]),
+                "contact_force_N": float(self.estimated_contact_force),
+                "fallback_active": bool(self.estimator_fallback),
+                "health_reason": self.estimator_reason,
+            },
+            "timing": {
+                "pinn_latency_ms": float(self.latency_ms),
+                "control_period_ms": 1.0e3 * self.controller.control_period,
+                "control_authority_N": self.controller.command_limit,
+            },
+            "sensors": {
+                "sample_count": self.sensors.sample_count,
+                "dropout_count": self.sensors.dropout_count,
+            },
+        }
 
     def _metrics(self, win):
         if len(win) < 2:

@@ -16,7 +16,7 @@ import time
 import traceback
 
 import os
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -31,6 +31,9 @@ async def _lifespan(_app: FastAPI):
         try:
             _compute_validation()
             _compute_overlay(300.0)
+            from backend.server.journeys import ensure_sample_journey
+
+            ensure_sample_journey(get_journey_store(), get_predictor())
             get_shadow_service().warm()
             get_modal_shadow_service().warm()
         except Exception:
@@ -61,6 +64,7 @@ _validation_cache = None
 _overlay_cache: dict[float, dict] = {}
 _servo = None
 _shadow_service = None
+_journey_store = None
 
 
 def get_predictor():
@@ -78,6 +82,15 @@ def get_servo():
         from backend.server.servo import ServoLink
         _servo = ServoLink()
     return _servo
+
+
+def get_journey_store():
+    global _journey_store
+    if _journey_store is None:
+        from backend.server.journeys import JourneyStore
+
+        _journey_store = JourneyStore()
+    return _journey_store
 
 
 
@@ -173,6 +186,61 @@ def physical_calibration_status():
     return calibration_status()
 
 
+@app.get("/api/journeys")
+def list_journeys(include_archived: bool = False):
+    return {"journeys": get_journey_store().list(include_archived)}
+
+
+@app.get("/api/journeys/{journey_id}")
+def get_journey(journey_id: str):
+    try:
+        return get_journey_store().get(journey_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="journey not found") from exc
+
+
+@app.patch("/api/journeys/{journey_id}/metadata")
+def update_journey_metadata(journey_id: str, changes: dict):
+    try:
+        metadata = get_journey_store().update_metadata(journey_id, changes)
+        return {"id": journey_id, "metadata": metadata}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="journey not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/journeys/{journey_id}/archive")
+def archive_journey(journey_id: str):
+    try:
+        return get_journey_store().archive(journey_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="journey not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/api/journeys/{journey_id}", status_code=204)
+def delete_journey(journey_id: str, confirm: str):
+    try:
+        get_journey_store().delete(journey_id, confirm)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="journey not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.get("/api/journeys/{journey_id}/export")
+def export_journey(journey_id: str, format: str = "audit"):
+    try:
+        path, media_type = get_journey_store().export(journey_id, format)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="journey not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return FileResponse(path, media_type=media_type, filename=path.name)
+
+
 @app.get("/api/overlay")
 def overlay(speed_kmh: float = 300.0):
     """PINN-predicted vs classical-solver contact force + timing (cached)."""
@@ -211,17 +279,29 @@ def modal_calibration(
     )
     return snapshot
 
-def _handle_input(engine: Engine, msg: dict):
+def _handle_input(engine: Engine, msg: dict, journey=None):
     kind = msg.get("type")
     val = msg.get("value")
     if kind == "speed":
         engine.set_speed(val)
+        applied = engine.rp.speed_kmh
     elif kind == "tension":
         engine.set_tension(val)
+        applied = engine.rp.tension_factor
     elif kind == "turbulence":
         engine.set_turbulence(val)
+        applied = engine.rp.turbulence_gain
     elif kind == "gust":
-        engine.trigger_gust(val if val is not None else 70.0)
+        applied = val if val is not None else 70.0
+        engine.trigger_gust(applied)
+    else:
+        return
+    if journey is not None:
+        journey.event("SCENARIO_INPUT", {
+            "type": kind,
+            "requested_value": val,
+            "applied_value": applied,
+        })
 
 
 @app.websocket("/ws")
@@ -229,19 +309,23 @@ async def ws(ws: WebSocket):
     await ws.accept()
     # Run the initial warm-up in a thread so we don't block other connections/health checks
     engine = await asyncio.to_thread(Engine, predictor=get_predictor())
+    journey = get_journey_store().create()
+    journey.event("JOURNEY_STARTED", {"automatic": True})
     servo = get_servo()  # optional; no-op without a board
     target_dt = 0.033  # ~30 fps, eased for Render CPU limits (33 sim steps of 1 ms per frame)
     n_sub = int(round(target_dt / engine.dt))
     stop = asyncio.Event()
+    journey_status = ["COMPLETED"]
 
     async def receiver():
         try:
             while not stop.is_set():
                 msg = await ws.receive_json()
-                _handle_input(engine, msg)
+                _handle_input(engine, msg, journey)
         except WebSocketDisconnect:
             pass
         except Exception:
+            journey_status[0] = "INTERRUPTED"
             traceback.print_exc()
         finally:
             stop.set()
@@ -251,18 +335,36 @@ async def ws(ws: WebSocket):
             while not stop.is_set():
                 t0 = time.perf_counter()
                 # Run the heavy simulation step in a background thread
-                await asyncio.to_thread(engine.step, n_sub)
+                await asyncio.to_thread(
+                    engine.step, n_sub, journey.record_physics
+                )
                 servo.send(engine.f_actuator_estimate)  # bounded hardware estimate
-                await ws.send_json(engine.frame())
+                frame = engine.frame()
+                frame["journey"] = {
+                    "id": journey.id,
+                    "status": "RUNNING",
+                    "started_at": journey.started_at,
+                    "schema_version": "aeropinn-journey-v1",
+                }
+                journey.record(frame)
+                await ws.send_json(frame)
                 await asyncio.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
         except WebSocketDisconnect:
             pass
         except Exception:
+            journey_status[0] = "INTERRUPTED"
             traceback.print_exc()
         finally:
             stop.set()
 
-    await asyncio.gather(receiver(), streamer())
+    tasks = [asyncio.create_task(receiver()), asyncio.create_task(streamer())]
+    try:
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        journey.finalize(journey_status[0])
 
 
 # Serve static files from the frontend/dist directory if it exists
