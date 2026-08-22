@@ -33,6 +33,8 @@ MODEL_PATH = Path(__file__).with_name("pinn_model.pt")
 
 def load_model(path: Path = MODEL_PATH) -> PantoPINN:
     ckpt = torch.load(path, weights_only=False)
+    if ckpt.get("actuation") != "articulated_frame":
+        raise RuntimeError("PINN checkpoint does not use articulated-frame actuation")
     cfg = PinnConfig(**ckpt["cfg"])
     model = PantoPINN(cfg)
     model.load_state_dict(ckpt["state_dict"])
@@ -61,11 +63,11 @@ class PINNPredictor:
         f_controls = np.atleast_1d(np.asarray(f_controls, dtype=np.float32))
         b = len(f_controls)
         y0, y0d, y0dd = wirefeat
-        ctx = np.empty((b, 8), dtype=np.float32)
+        ctx = np.empty((b, 9), dtype=np.float32)
         ctx[:, 0] = state4[0]; ctx[:, 1] = state4[1]
         ctx[:, 2] = state4[2]; ctx[:, 3] = state4[3]
-        ctx[:, 4] = f_controls + fa
-        ctx[:, 5] = y0; ctx[:, 6] = y0d; ctx[:, 7] = y0dd
+        ctx[:, 4] = fa; ctx[:, 5] = f_controls
+        ctx[:, 6] = y0; ctx[:, 7] = y0d; ctx[:, 8] = y0dd
         tau = torch.full((b, 1), self.H)
         f = self.model.contact_force(tau, torch.from_numpy(ctx))
         return f.squeeze(-1).numpy()
@@ -74,7 +76,7 @@ class PINNPredictor:
         """Advance one horizon H; returns (z1,z1d,z2,z2d) via autograd velocities."""
         y0, y0d, y0dd = wirefeat
         ctx = torch.tensor(
-            [[state4[0], state4[1], state4[2], state4[3], f_control + fa, y0, y0d, y0dd]],
+            [[state4[0], state4[1], state4[2], state4[3], fa, f_control, y0, y0d, y0dd]],
             dtype=torch.float32,
         )
         tau = torch.full((1, 1), self.H, requires_grad=True)
@@ -101,12 +103,13 @@ class PINNPredictor:
         if states.shape != (len(controls), 4):
             raise ValueError("states4 must have shape (n_candidates, 4)")
         y0, y0d, y0dd = wirefeat
-        ctx_np = np.empty((len(controls), 8), dtype=np.float32)
+        ctx_np = np.empty((len(controls), 9), dtype=np.float32)
         ctx_np[:, :4] = states
-        ctx_np[:, 4] = controls + fa
-        ctx_np[:, 5] = y0
-        ctx_np[:, 6] = y0d
-        ctx_np[:, 7] = y0dd
+        ctx_np[:, 4] = fa
+        ctx_np[:, 5] = controls
+        ctx_np[:, 6] = y0
+        ctx_np[:, 7] = y0d
+        ctx_np[:, 8] = y0dd
         # One batched forward evaluates H and H+/-epsilon. A backward/autograd pass at
         # every MPC rollout step misses the real-time deadline on shared CPUs.
         # The network trajectory is smooth, so this backward difference accurately

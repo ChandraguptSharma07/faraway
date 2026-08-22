@@ -5,8 +5,8 @@ a horizon H ahead for a set of candidate counter-forces, then picks the candidat
 keeps the predicted contact force closest to the setpoint (with a small control-effort
 and rate penalty). Short-horizon receding control — simple and honest.
 
-The selected counter-force is applied to the collector head (same channel as the
-aerodynamic force), emulating an active actuator.
+The selected force is applied to the articulated frame by the plant model, matching
+the pneumatic frame-actuation layout used in RTRI experiments.
 """
 
 from __future__ import annotations

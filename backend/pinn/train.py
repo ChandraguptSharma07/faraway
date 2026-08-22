@@ -97,7 +97,15 @@ def train(
                   f"  ode={lo.item():.3e}  val force RMSE={rmse:.2f} N")
 
     rmse = eval_force_rmse(model, ctx_val, tgt_val, H)
-    torch.save({"state_dict": model.state_dict(), "cfg": cfg.__dict__}, MODEL_PATH)
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "cfg": cfg.__dict__,
+            "schema_version": 2,
+            "actuation": "articulated_frame",
+        },
+        MODEL_PATH,
+    )
     if verbose:
         print(f"\nsaved {MODEL_PATH}  (val contact-force RMSE = {rmse:.2f} N)")
     return {"val_force_rmse_N": rmse, "path": str(MODEL_PATH)}

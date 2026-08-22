@@ -1,9 +1,16 @@
-"""Bounded active-pantograph actuator used by the live simulation.
+"""Bounded pneumatic frame actuator used by the live simulation.
 
-The 7 Hz response target is inferred from RTRI vibration-test evidence for the
-effective impedance-control range; it is not a manufacturer actuator specification.
-Transport delay and force/rate limits remain explicit assumptions.
-Reference: https://doi.org/10.2219/rtriqr.53.28
+Test-rig baseline, not railway-certified hardware:
+- SMC VER2000 proportional valve: 40 ms published response time.
+- SMC MQQ/MQM 25 mm low-friction cylinder: 490.9 mm² cap-side area; the
+  selected 0.2 MPa differential-pressure cap gives 98.2 N theoretical force.
+- RTRI active-pantograph experiments place a pneumatic cylinder in parallel with
+  the raising mechanism and apply force to the articulated frame.
+
+The 4 ms digital transport delay remains an explicit assumption pending measurement.
+Sources: https://doi.org/10.2219/rtriqr.53.28
+         https://www.smcworld.com/catalog/BEST-5-5-en/mpv/5-p0892-0898-ver_en/data/5-p0892-0898-ver_en.pdf
+         https://www.smcworld.com/catalog/en/actuator/MQQ-MQM-MQP-E/6-2-3-p0317-0344-mq_en/data/6-2-3-p0317-0344-mq_en.pdf
 """
 
 from __future__ import annotations
@@ -16,21 +23,37 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ActuatorParams:
-    response_hz: float = 7.0
+    response_time: float = 40.0e-3
     transport_delay: float = 4.0e-3
-    force_limit: float = 90.0
-    force_rate_limit: float = 4_000.0
+    force_limit: float = 98.2
+    force_rate_limit: float = 2_455.0
 
     @property
     def time_constant(self) -> float:
-        return 1.0 / (2.0 * np.pi * self.response_hz)
+        # Conservative first-order interpretation of the published valve response.
+        return self.response_time
+
+    @property
+    def response_hz(self) -> float:
+        return 1.0 / (2.0 * np.pi * self.response_time)
 
 
 ACTUATOR_PROVENANCE = {
-    "response_hz": "published-experimental-effective-control-range",
+    "response_time": "published-smc-ver2000-no-load-response",
     "transport_delay": "assumed-control-cycle-delay",
-    "force_limit": "assumed-existing-training-envelope",
-    "force_rate_limit": "assumed-derived-from-force-and-bandwidth",
+    "force_limit": "derived-smc-mqq25-area-at-selected-0.2mpa-differential",
+    "force_rate_limit": "derived-force-limit-over-published-response-time",
+}
+
+ACTUATOR_BASELINE = {
+    "status": "DATASHEET_BASELINE_NOT_IDENTIFIED",
+    "mounting": "ARTICULATED_FRAME",
+    "valve": "SMC VER2000",
+    "cylinder": "SMC MQQ/MQM 25 mm low-friction",
+    "valve_response_ms": 40.0,
+    "piston_area_mm2": 490.9,
+    "selected_pressure_differential_MPa": 0.2,
+    "railway_qualified": False,
 }
 
 

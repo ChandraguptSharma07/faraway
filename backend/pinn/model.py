@@ -1,12 +1,13 @@
 """Physics-Informed Neural Network — a short-horizon contact-force PREDICTOR.
 
 The PINN is NOT the controller. It answers: "given the current state, the local
-disturbance, and an applied head force, what does the pantograph do over the next
-few milliseconds?" A separate controller (backend/controller/) queries it.
+disturbance, aerodynamic head force, and applied frame force, what does the
+pantograph do over the next few milliseconds?" A separate controller
+(backend/controller/) queries it.
 
 Formulation (time-continuous over a short horizon tau in [0, H]):
 
-  context c = [z1, z1', z2, z2', f_head, y0, y0', y0'']    (state + force + local wire)
+  context c = [z1, z1', z2, z2', f_aero, f_frame, y0, y0', y0'']
   network   n_theta(tau, c) -> (n1, n2)
   trajectory (hard initial-condition constraint, exact position AND velocity at tau=0):
       z1(tau) = z1_0 + z1'_0 * tau + tau^2 * A * n1
@@ -49,13 +50,13 @@ class PinnConfig:
     depth: int = 3
 
 
-def context_from(z1, z1d, z2, z2d, f_head, y0, y0d, y0dd) -> torch.Tensor:
-    """Assemble a (…, 8) context tensor from raw physical quantities."""
+def context_from(z1, z1d, z2, z2d, f_aero, f_frame, y0, y0d, y0dd) -> torch.Tensor:
+    """Assemble a (…, 9) context tensor from raw physical quantities."""
     return torch.stack(
         [
             torch.as_tensor(z1), torch.as_tensor(z1d),
             torch.as_tensor(z2), torch.as_tensor(z2d),
-            torch.as_tensor(f_head),
+            torch.as_tensor(f_aero), torch.as_tensor(f_frame),
             torch.as_tensor(y0), torch.as_tensor(y0d), torch.as_tensor(y0dd),
         ],
         dim=-1,
@@ -68,17 +69,17 @@ class PantoPINN(nn.Module):
         self.cfg = cfg or PinnConfig()
         self.panto = panto or PantographParams()
 
-        layers: list[nn.Module] = [nn.Linear(9, self.cfg.hidden), nn.Tanh()]
+        layers: list[nn.Module] = [nn.Linear(10, self.cfg.hidden), nn.Tanh()]
         for _ in range(self.cfg.depth - 1):
             layers += [nn.Linear(self.cfg.hidden, self.cfg.hidden), nn.Tanh()]
         layers += [nn.Linear(self.cfg.hidden, 2)]
         self.net = nn.Sequential(*layers)
 
-        # Normalization vector for the 8-dim context (registered, not trained).
+        # Normalization vector for the 9-dim context (registered, not trained).
         s = SCALE
         self.register_buffer(
             "ctx_scale",
-            torch.tensor([s["z"], s["zd"], s["z"], s["zd"], s["f"], s["y"], s["yd"], s["ydd"]]),
+            torch.tensor([s["z"], s["zd"], s["z"], s["zd"], s["f"], s["f"], s["y"], s["yd"], s["ydd"]]),
         )
 
     def _raw(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
@@ -96,7 +97,7 @@ class PantoPINN(nn.Module):
         return z1, z2
 
     def wire(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
-        y0, y0d, y0dd = ctx[..., 5:6], ctx[..., 6:7], ctx[..., 7:8]
+        y0, y0d, y0dd = ctx[..., 6:7], ctx[..., 7:8], ctx[..., 8:9]
         return y0 + y0d * tau + 0.5 * y0dd * tau * tau
 
     def contact_force(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
@@ -123,14 +124,15 @@ class PantoPINN(nn.Module):
         p = self.panto  # noqa
         yw = self.wire(tau, ctx)
         P = torch.relu(self.panto.kc * (z1 - yw))
-        f_head = ctx[..., 4:5]
+        f_aero = ctx[..., 4:5]
+        f_frame = ctx[..., 5:6]
 
         res1 = (
             self.panto.m1 * z1dd
             + self.panto.r1 * (z1d - z2d)
             + self.panto.k1 * (z1 - z2)
             + P
-            - f_head
+            - f_aero
         )
         res2 = (
             self.panto.m2 * z2dd
@@ -139,6 +141,7 @@ class PantoPINN(nn.Module):
             + self.panto.r1 * (z2d - z1d)
             + self.panto.k1 * (z2 - z1)
             - self.panto.F0
+            - f_frame
         )
         # Scale residuals to comparable magnitude (forces in N).
         return res1, res2

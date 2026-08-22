@@ -11,7 +11,11 @@ from collections import deque
 
 import numpy as np
 
-from backend.controller.actuator import ActuatorParams, ForceActuator
+from backend.controller.actuator import (
+    ACTUATOR_BASELINE,
+    ActuatorParams,
+    ForceActuator,
+)
 from backend.controller.actuator_mpc import ActuatorAwarePINNMPC
 from backend.controller.mpc import PINNMPCController
 from backend.pinn.data import _wire_features
@@ -72,8 +76,8 @@ class Engine:
             setpoint=self.setpoint,
             control_period=control_period,
         )
-        # This controller sees the explicit delayed actuator and a 40 ms PINN
-        # rollout. Ten milliseconds gives the provisional 7 Hz / 4 ms actuator a
+        # This controller sees the explicit delayed actuator and a 90 ms PINN
+        # rollout. Ten milliseconds gives the datasheet 40 ms / assumed 4 ms actuator a
         # tested real-time margin; timing misses remain visible and unidentified
         # hardware is still a deployment blocker.
         self.controller = ActuatorAwarePINNMPC(
@@ -83,9 +87,10 @@ class Engine:
             speed_ms,
             self.rp.beyond(),
             setpoint=self.setpoint,
-            n_candidates=11,
-            rollout_steps=8,
+            n_candidates=21,
+            rollout_steps=18,
             control_period=10.0e-3,
+            w_rate=1.5e-3,
         )
 
         n = int(window_s / dt)
@@ -255,11 +260,14 @@ class Engine:
                 "force_limit_N": self.actuator.params.force_limit,
                 "force_rate_limit_N_s": self.actuator.params.force_rate_limit,
                 "provenance": "mixed published/assumed",
-                "parameter_status": "ASSUMED_NOT_IDENTIFIED",
+                "parameter_status": ACTUATOR_BASELINE["status"],
+                "baseline": ACTUATOR_BASELINE,
                 "tested_uncertainty": {
                     "response_hz": [3.0, 10.0],
                     "delay_ms": [2.0, 15.0],
                     "result": "NOT_ROBUST_ACROSS_FULL_RANGE",
+                    "nominal_300_passed": "9/9",
+                    "harsh_350_passed": "6/9",
                 },
             },
         }

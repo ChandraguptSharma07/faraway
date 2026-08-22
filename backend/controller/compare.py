@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from backend.controller.mpc import PINNMPCController
+from backend.controller.actuator import ForceActuator
+from backend.controller.actuator_mpc import ActuatorAwarePINNMPC
 from backend.pinn.predict import PINNPredictor
 from backend.sim.disturbance import Disturbance
 from backend.sim.parameters import BeyondEnvelope, CatenaryParams, PantographParams, kmh_to_ms
@@ -36,10 +37,21 @@ def run_comparison(
 
     passive = simulate(speed_ms, duration=duration, cat=cat, panto=panto, beyond=beyond, dist=dist_p)
 
-    controller = PINNMPCController(predictor, dist_a, speed_ms, beyond)
+    actuator = ForceActuator(1.0e-3)
+    controller = ActuatorAwarePINNMPC(
+        predictor,
+        actuator,
+        dist_a,
+        speed_ms,
+        beyond,
+    )
+
+    def applied_force(t, state, force):
+        return actuator.step(controller(t, state, force))
+
     aeropinn = simulate(
         speed_ms, duration=duration, cat=cat, panto=panto, beyond=beyond, dist=dist_a,
-        f_control_fn=controller,
+        f_control_fn=applied_force,
     )
 
     mp, ma = metrics(passive), metrics(aeropinn)

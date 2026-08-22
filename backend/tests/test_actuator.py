@@ -3,19 +3,37 @@ from dataclasses import fields
 import numpy as np
 
 from backend.controller.actuator import (
+    ACTUATOR_BASELINE,
     ACTUATOR_PROVENANCE,
     ActuatorParams,
     ForceActuator,
 )
 from backend.server.engine import Engine
+from backend.sim.disturbance import Disturbance
+from backend.sim.parameters import BeyondEnvelope, CatenaryParams, PantographParams
+from backend.sim.solver import deriv
 
 
 def test_actuator_parameters_are_explicitly_sourced_or_assumed():
     assert {field.name for field in fields(ActuatorParams)} == set(ACTUATOR_PROVENANCE)
     assert all(
-        value.startswith(("published", "assumed"))
+        value.startswith(("published", "assumed", "derived"))
         for value in ACTUATOR_PROVENANCE.values()
     )
+    assert ACTUATOR_BASELINE["mounting"] == "ARTICULATED_FRAME"
+    assert ACTUATOR_BASELINE["railway_qualified"] is False
+    assert ActuatorParams().force_limit == 98.2
+
+
+def test_control_force_acts_on_frame_not_collector_head():
+    state = np.array([0.02, 0.0, 0.03, 0.0])
+    dist = Disturbance(CatenaryParams())
+    panto = PantographParams()
+    beyond = BeyondEnvelope()
+    passive, _ = deriv(state, 0.0, 70.0, dist, panto, beyond, 0.0)
+    active, _ = deriv(state, 0.0, 70.0, dist, panto, beyond, 30.0)
+    assert active[1] == passive[1]
+    assert np.isclose(active[3] - passive[3], 30.0 / panto.m2)
 
 
 def test_actuator_respects_transport_delay_rate_and_force_bounds():
@@ -74,7 +92,8 @@ def test_engine_marks_explicit_actuator_as_in_loop_and_keeps_ideal_reference():
     assert frame["control_fidelity"] == "SIMULATED_ACTUATOR_IN_LOOP"
     assert frame["actuator"]["mode"] == "SIMULATED_IN_LOOP"
     assert frame["deployment_status"] == "SIMULATION_ONLY"
-    assert frame["actuator"]["parameter_status"] == "ASSUMED_NOT_IDENTIFIED"
+    assert frame["actuator"]["parameter_status"] == "DATASHEET_BASELINE_NOT_IDENTIFIED"
+    assert frame["actuator"]["baseline"]["railway_qualified"] is False
     assert "f_command" in frame["aeropinn"]
     assert "f_actuator_estimate" in frame["aeropinn"]
     assert "idealized_reference" in frame

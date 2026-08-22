@@ -31,10 +31,10 @@ class ActuatorAwarePINNMPC:
         beyond: BeyondEnvelope,
         setpoint: float = 115.0,
         n_candidates: int = 21,
-        rollout_steps: int = 6,
+        rollout_steps: int = 18,
         control_period: float = 10.0e-3,
         w_effort: float = 2.0e-4,
-        w_rate: float = 8.0e-4,
+        w_rate: float = 1.5e-3,
     ):
         self.pred = predictor
         self.actuator = actuator

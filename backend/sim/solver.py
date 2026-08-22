@@ -3,7 +3,7 @@
 Integrates the EN 50318 two-mass pantograph EOM (positive = up):
 
   m1*z1'' + r1*(z1'-z2') + k1*(z1-z2)                            = -P(t) + F_aero
-  m2*z2'' + r2*z2'        + k2*z2 + r1*(z2'-z1') + k1*(z2-z1)    = F0
+  m2*z2'' + r2*z2'        + k2*z2 + r1*(z2'-z1') + k1*(z2-z1)    = F0 + F_act
   P(t) = max(kc*(y_wire(t) - z1), 0)     # clamp at 0 -> loss of contact (no tension)
 
 State vector s = [z1, z1', z2, z2'];  base z3 fixed at 0 (reduced model).
@@ -49,16 +49,17 @@ def deriv(
 ) -> tuple[np.ndarray, float]:
     """State derivative + the contact force at this instant.
 
-    f_control is the AeroPINN counter-force applied to the head (0 for passive).
+    f_control is the AeroPINN force applied to the articulated frame, matching
+    pneumatic active-pantograph experiments (0 for passive).
     """
     z1, z1d, z2, z2d = state
     yw = float(dist.y_wire(t, speed_ms, beyond))
     p = _contact_force(yw, z1, panto.kc)
     fa = dist.aero_force(speed_ms, beyond)
 
-    z1dd = (-p + fa + f_control - panto.r1 * (z1d - z2d) - panto.k1 * (z1 - z2)) / panto.m1
+    z1dd = (-p + fa - panto.r1 * (z1d - z2d) - panto.k1 * (z1 - z2)) / panto.m1
     z2dd = (
-        panto.F0
+        panto.F0 + f_control
         - panto.r2 * z2d
         - panto.k2 * z2
         - panto.r1 * (z2d - z1d)
@@ -90,7 +91,7 @@ def static_equilibrium(
     fa = dist.aero_force(speed_ms, beyond)
     kc, k1, k2 = panto.kc, panto.k1, panto.k2
     # Linear static system (assume in contact, y_wire mean ~ 0):
-    #   k1(z1-z2) + kc*z1 = fa + f_control(0)        [head, P = kc*(0 - z1) = -kc z1]
+    #   k1(z1-z2) + kc*z1 = fa                       [passive equilibrium]
     #   k2*z2 + k1(z2-z1) = F0
     A = np.array([[k1 + kc, -k1], [-k1, k1 + k2]])
     b = np.array([fa, panto.F0])
@@ -112,7 +113,7 @@ def simulate(
 ) -> SimResult:
     """Integrate the passive (or controlled) system over `duration` seconds.
 
-    f_control_fn(t, state, force) -> float lets the controller inject a head force.
+    f_control_fn(t, state, force) -> float lets the controller inject a frame force.
     """
     cat = cat or CatenaryParams()
     panto = panto or PantographParams()

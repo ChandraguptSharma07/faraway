@@ -3,7 +3,7 @@
 Strategy: build a bank of realistic pantograph states by running the classical
 solver across the operating envelope (validated + beyond-envelope speeds/tension/
 turbulence). For each training sample, take a realistic state, apply a random
-candidate head force f_control, and roll the TRUE EN 50318 EOM forward by one
+candidate frame force f_control, and roll the TRUE EN 50318 EOM forward by one
 horizon H to get the target state. This teaches the network the local input->output
 map the controller will query, over the distribution of states it will actually see.
 """
@@ -30,7 +30,7 @@ ENVELOPE = [
     (350, 0.6, 2.5),
     (360, 0.5, 3.0),
 ]
-F_CONTROL_MAX = 90.0  # N  control-authority range explored during training
+F_CONTROL_MAX = 100.0  # N  covers the 98.2 N selected cylinder-force cap
 
 
 def _wire_features(dist: Disturbance, t: float, speed_ms: float, beyond: BeyondEnvelope):
@@ -64,9 +64,9 @@ def generate_dataset(
     seed: int = 7,
     panto: PantographParams | None = None,
 ):
-    """Return (ctx[N,8], target_state[N,4]) as float32 numpy arrays.
+    """Return (ctx[N,9], target_state[N,4]) as float32 numpy arrays.
 
-    ctx     = [z1, z1d, z2, z2d, f_head, y0, y0d, y0dd]   (f_head = f_control + f_aero)
+    ctx     = [z1, z1d, z2, z2d, f_aero, f_frame, y0, y0d, y0dd]
     target  = [z1(H), z2(H), z1d(H), z2d(H)]
     """
     panto = panto or PantographParams()
@@ -90,7 +90,7 @@ def generate_dataset(
     rng.shuffle(bank)
     bank = bank[:n_samples]
 
-    ctx = np.empty((len(bank), 8), dtype=np.float64)
+    ctx = np.empty((len(bank), 9), dtype=np.float64)
     tgt = np.empty((len(bank), 4), dtype=np.float64)
 
     # velocities aren't stored by simulate(); reconstruct via central difference on z.
@@ -104,12 +104,11 @@ def generate_dataset(
 
         f_control = float(rng.uniform(-F_CONTROL_MAX, F_CONTROL_MAX))
         fa = dist.aero_force(speed_ms, beyond)
-        f_head = f_control + fa
         y0, y0d, y0dd = _wire_features(dist, t, speed_ms, beyond)
 
         sH = _rollout_h(state, t, speed_ms, dist, panto, beyond, f_control, horizon)
 
-        ctx[j] = [state[0], state[1], state[2], state[3], f_head, y0, y0d, y0dd]
+        ctx[j] = [state[0], state[1], state[2], state[3], fa, f_control, y0, y0d, y0dd]
         tgt[j] = [sH[0], sH[2], sH[1], sH[3]]  # z1H, z2H, z1dH, z2dH
 
     return ctx.astype(np.float32), tgt.astype(np.float32)

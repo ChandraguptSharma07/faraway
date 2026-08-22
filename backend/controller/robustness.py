@@ -116,7 +116,7 @@ def run_uncertainty_sweep(duration: float = 6.0, seed: int = 999) -> list[dict]:
             actuator = ForceActuator(
                 1.0e-3,
                 ActuatorParams(
-                    response_hz=response_hz,
+                    response_time=1.0 / (2.0 * 3.141592653589793 * response_hz),
                     transport_delay=delay_ms * 1.0e-3,
                 ),
             )
@@ -126,9 +126,10 @@ def run_uncertainty_sweep(duration: float = 6.0, seed: int = 999) -> list[dict]:
                 dist,
                 speed_ms,
                 beyond,
-                n_candidates=11,
-                rollout_steps=8,
+                n_candidates=21,
+                rollout_steps=18,
                 control_period=10.0e-3,
+                w_rate=1.5e-3,
             )
 
             def applied_force(t, state, force):
