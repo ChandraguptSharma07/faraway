@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Decoupled Three.js track animation from the backend `current.t` to fix visual stuttering in the frontend.
 - Increased shadow simulation duration to 3.0s to allow startup transients to decay in the distributed solver.
 - Restored sourced catenary parameters and strict contact-loss agreement gates in shadow comparisons.
+- Stabilized MPC candidate selection against sub-resolution numerical cost ties using minimum-effort resolution.
 
 ### Fixed
 - Fixed an `ImportError` for `libstdc++.so.6` on NixOS by patching `run_local.sh` to inject the correct `LD_LIBRARY_PATH`.

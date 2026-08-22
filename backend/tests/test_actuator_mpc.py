@@ -1,11 +1,21 @@
 import numpy as np
 
+from backend.controller.selection import minimum_effort_near_optimum
 from backend.controller.robustness import (
     ACTUATOR_SWEEP,
     OPERATING_SCENARIOS,
     evaluate_promotion,
 )
 from backend.pinn.predict import PINNPredictor
+
+
+def test_near_optimal_selection_ignores_sub_resolution_cost_flips():
+    candidates = np.array([0.0, 9.82, 19.64, 29.46])
+    first = np.array([250550.95, 250550.63, 250550.60, 250551.03])
+    perturbed = np.array([250550.95, 250550.61, 250550.64, 250551.03])
+
+    assert minimum_effort_near_optimum(first, candidates, 0.185, 68.74) == 1
+    assert minimum_effort_near_optimum(perturbed, candidates, 0.185, 68.74) == 1
 
 
 def test_batched_finite_difference_state_matches_autograd_prediction():

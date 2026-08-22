@@ -145,6 +145,7 @@ class Engine:
             w_rate=1.5e-3,
             wire_estimate=self.wire_estimate,
             command_limit=25.0,
+            force_resolution=self.sensor_params.force_resolution,
         )
 
         n = int(window_s / dt)

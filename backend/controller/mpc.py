@@ -18,6 +18,7 @@ import numpy as np
 
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
+from backend.controller.selection import minimum_effort_near_optimum
 from backend.sim.disturbance import Disturbance
 from backend.sim.parameters import BeyondEnvelope
 
@@ -36,6 +37,7 @@ class PINNMPCController:
         w_effort: float = 1.0e-4,
         w_rate: float = 5.0e-4,
         candidate_force_fn=None,
+        force_resolution: float = 0.10,
     ):
         self.pred = predictor
         self.dist = dist
@@ -48,6 +50,9 @@ class PINNMPCController:
         self.w_effort = w_effort
         self.w_rate = w_rate
         self.candidate_force_fn = candidate_force_fn
+        if force_resolution <= 0.0:
+            raise ValueError("force_resolution must be positive")
+        self.cost_tie_tolerance = force_resolution ** 2
 
         self._last_fc = 0.0
         self._last_t = -1e9
@@ -77,7 +82,13 @@ class PINNMPCController:
             + self.w_effort * self.candidates ** 2
             + self.w_rate * (self.candidates - self._last_fc) ** 2
         )
-        best = float(self.candidates[int(np.argmin(cost))])
+        best_index = minimum_effort_near_optimum(
+            cost,
+            self.candidates,
+            self.cost_tie_tolerance,
+            self._last_fc,
+        )
+        best = float(self.candidates[best_index])
         self.last_latency_ms = 1e3 * (time.perf_counter() - t0)
         self._latencies.append(self.last_latency_ms)
         self._deadline_misses.append(self.last_latency_ms > 1e3 * self.control_period)

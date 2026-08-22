@@ -15,6 +15,7 @@ import time
 import numpy as np
 
 from backend.controller.actuator import ForceActuator
+from backend.controller.selection import minimum_effort_near_optimum
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
 from backend.sim.parameters import BeyondEnvelope
@@ -38,6 +39,7 @@ class ActuatorAwarePINNMPC:
         w_wave_position: float = 1.0,
         w_wave_velocity: float = 2.0e-3,
         command_limit: float | None = None,
+        force_resolution: float = 0.10,
     ):
         self.pred = predictor
         self.actuator = actuator
@@ -60,6 +62,13 @@ class ActuatorAwarePINNMPC:
         self.wire_estimate = wire_estimate
         self.w_wave_position = w_wave_position
         self.w_wave_velocity = w_wave_velocity
+        if force_resolution <= 0.0:
+            raise ValueError("force_resolution must be positive")
+        tracking_weight_sum = sum(
+            0.5 + (step + 1) / rollout_steps
+            for step in range(rollout_steps)
+        )
+        self.cost_tie_tolerance = tracking_weight_sum * force_resolution ** 2
         self._last_command = 0.0
         self._last_t = -1e9
         self._held = 0.0
@@ -153,7 +162,13 @@ class ActuatorAwarePINNMPC:
             + self.w_effort * self.candidates ** 2
             + self.w_rate * (self.candidates - self._last_command) ** 2
         )
-        best = float(self.candidates[int(np.argmin(cost))])
+        best_index = minimum_effort_near_optimum(
+            cost,
+            self.candidates,
+            self.cost_tie_tolerance,
+            self._last_command,
+        )
+        best = float(self.candidates[best_index])
         self.last_latency_ms = 1e3 * (time.perf_counter() - started)
         self._latencies.append(self.last_latency_ms)
         self._deadline_misses.append(

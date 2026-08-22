@@ -24,6 +24,8 @@ def run_comparison(
     duration: float = 6.0,
     seed: int = 999,
     predictor: PINNPredictor | None = None,
+    dt: float = 1.0e-3,
+    disturbance_factory=Disturbance,
 ):
     beyond = beyond or BeyondEnvelope()
     predictor = predictor or PINNPredictor()
@@ -32,12 +34,20 @@ def run_comparison(
     speed_ms = kmh_to_ms(speed_kmh)
 
     # identical disturbance for both systems
-    dist_p = Disturbance(cat, seed=seed)
-    dist_a = Disturbance(cat, seed=seed)
+    dist_p = disturbance_factory(cat, seed=seed)
+    dist_a = disturbance_factory(cat, seed=seed)
 
-    passive = simulate(speed_ms, duration=duration, cat=cat, panto=panto, beyond=beyond, dist=dist_p)
+    passive = simulate(
+        speed_ms,
+        duration=duration,
+        dt=dt,
+        cat=cat,
+        panto=panto,
+        beyond=beyond,
+        dist=dist_p,
+    )
 
-    actuator = ForceActuator(1.0e-3)
+    actuator = ForceActuator(dt)
     controller = ActuatorAwarePINNMPC(
         predictor,
         actuator,
@@ -50,7 +60,13 @@ def run_comparison(
         return actuator.step(controller(t, state, force))
 
     aeropinn = simulate(
-        speed_ms, duration=duration, cat=cat, panto=panto, beyond=beyond, dist=dist_a,
+        speed_ms,
+        duration=duration,
+        dt=dt,
+        cat=cat,
+        panto=panto,
+        beyond=beyond,
+        dist=dist_a,
         f_control_fn=applied_force,
     )
 
