@@ -338,7 +338,7 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
     camera.lookAt(0, 0.1, 0)
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' })
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6))
+    renderer.setPixelRatio(1)
     renderer.setClearColor(0x05070b, 0)
     renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
@@ -420,7 +420,7 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
       const elapsed = clock.getElapsedTime()
       const current = frameRef.current
       const systems = [current?.passive, current?.aeropinn]
-      const trackOffset = current ? ((current.speed_kmh / 3.6) * current.t * 0.06) % 1.2 : 0
+      const trackOffset = current ? ((current.speed_kmh / 3.6) * elapsed * 0.06) % 1.2 : 0
 
       for (let i = 0; i < tracks.length; i += 1) tracks[i].update(trackOffset)
       for (let i = 0; i < laneData.length; i += 1) {
