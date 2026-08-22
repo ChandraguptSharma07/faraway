@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { useThrottledFrame } from '../hooks/useTelemetry'
 
 const TRAIN_URL = '/models/lastochka.glb'
@@ -323,6 +324,25 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
     renderer.toneMappingExposure = 1.3
     mount.appendChild(renderer.domElement)
 
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.target.set(0, 0.1, 0)
+    controls.enableDamping = !reducedRef.current
+    controls.dampingFactor = 0.07
+    controls.enablePan = true
+    controls.screenSpacePanning = false
+    controls.minDistance = 9
+    controls.maxDistance = 48
+    controls.minPolarAngle = 0.2
+    controls.maxPolarAngle = Math.PI * 0.49
+    controls.zoomSpeed = 0.8
+    controls.panSpeed = 0.65
+    controls.rotateSpeed = 0.55
+    controls.update()
+    controls.saveState()
+
+    const resetCamera = () => controls.reset()
+    renderer.domElement.addEventListener('dblclick', resetCamera)
+
     scene.add(new THREE.HemisphereLight(0xd8ecff, 0x1b2029, 3.0))
     const key = new THREE.DirectionalLight(0xffffff, 4.4)
     key.position.set(-8, 14, 10)
@@ -389,6 +409,8 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
         if (!reducedRef.current) laneData[i].root.position.y = Math.sin(elapsed * 2.2 + i) * 0.008
       }
 
+      controls.enableDamping = !reducedRef.current
+      controls.update()
       renderer.render(scene, camera)
       raf = requestAnimationFrame(draw)
     }
@@ -398,6 +420,8 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
       alive = false
       cancelAnimationFrame(raf)
       observer.disconnect()
+      renderer.domElement.removeEventListener('dblclick', resetCamera)
+      controls.dispose()
       scene.traverse((object) => {
         if (object.geometry) object.geometry.dispose()
         if (object.material) {
@@ -422,6 +446,9 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
       )}
       <LaneHud label="PASSIVE" system={passive} side="left" />
       <LaneHud label="AeroPINN" system={active} side="right" active />
+      <div className="world3d-nav-hint mono">
+        DRAG ORBIT · WHEEL ZOOM · RIGHT-DRAG PAN · DOUBLE-CLICK RESET
+      </div>
       <div className="model-credit">
         Lastochka model by tiunov.se · CC BY 4.0 · modified for AeroPINN
       </div>
