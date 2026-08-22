@@ -74,9 +74,12 @@ class Engine:
         self.cat = CatenaryParams()
         self.panto = PantographParams()
         self.rp = RuntimeParams()
-        self.dist_p = Disturbance(self.cat, seed=seed)
-        self.dist_a = Disturbance(self.cat, seed=seed + 999)
-        self.dist = self.dist_a
+        # A controlled A/B comparison requires identical exogenous forcing. The
+        # lane-specific wire objects below still develop different ripples because
+        # passive and active contact forces differ.
+        self.dist = Disturbance(self.cat, seed=seed)
+        self.dist_p = self.dist
+        self.dist_a = self.dist
         self.control_environment = CatenaryPrior(self.cat)
         self.predictor = predictor or PINNPredictor()
         self.setpoint = 115.0
@@ -90,9 +93,9 @@ class Engine:
         self.wire_estimate = RealtimeCatenary(
             self.catenary_model, dt, self.setpoint
         )
-        self.env_p = CoupledWireEnvironment(self.dist_p, self.wire_p)
-        self.env_a = CoupledWireEnvironment(self.dist_a, self.wire_a)
-        self.env_ideal = CoupledWireEnvironment(self.dist_a, self.wire_ideal)
+        self.env_p = CoupledWireEnvironment(self.dist, self.wire_p)
+        self.env_a = CoupledWireEnvironment(self.dist, self.wire_a)
+        self.env_ideal = CoupledWireEnvironment(self.dist, self.wire_ideal)
 
         self.t = 0.0
         speed_ms = kmh_to_ms(self.rp.speed_kmh)

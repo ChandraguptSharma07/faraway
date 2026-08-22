@@ -5,6 +5,26 @@ import json
 import numpy as np
 
 from backend.server.engine import Engine
+from backend.sim.parameters import kmh_to_ms
+
+
+def test_lanes_share_forcing_but_keep_independent_wire_states():
+    e = Engine(seed=1729)
+    speed_ms = kmh_to_ms(e.rp.speed_kmh)
+    beyond = e.rp.beyond()
+
+    assert e.env_p.base is e.env_a.base
+    assert e.env_p.wire is not e.env_a.wire
+    for t in np.linspace(0.0, 1.0, 11):
+        assert e.env_p.base.y_wire(t, speed_ms, beyond) == e.env_a.base.y_wire(
+            t, speed_ms, beyond
+        )
+
+    for _ in range(250):
+        e.wire_p.step(150.0, speed_ms)
+        e.wire_a.step(90.0, speed_ms)
+    assert not np.allclose(e.wire_p.displacement, e.wire_a.displacement)
+    assert e.wire_p.contact_displacement() != e.wire_a.contact_displacement()
 
 
 def test_frame_is_json_serializable_after_gust():

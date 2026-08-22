@@ -11,6 +11,7 @@ const ARC = 0xff3b3b
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
 const PANTOGRAPH_X = -6.4
 const PANTOGRAPH_Y = -0.42
+const MILLIMETRES_TO_SCENE = 0.001
 
 function clamp(value, low, high) {
   return Math.max(low, Math.min(high, value))
@@ -133,17 +134,21 @@ function makePantograph(isActive) {
 
   return {
     group,
-    update(system, frame, showPhysics, reduced) {
+    update(system, frame, showPhysics, reduced, motionGain) {
       const headMm = system?.head_mm ?? 0
       const wireMm = system?.wire_mm ?? frame?.wire_mm ?? 0
       const lost = system?.contact_lost ?? false
       const frameMm = system?.frame_mm ?? 0
       const baseY = 2.0
-      let topY = 3.25 + clamp(headMm, -100, 100) * 0.05
-      const wireY = 3.25 + clamp(wireMm, -100, 100) * 0.05
-      if (lost && topY > wireY - 0.12) topY = wireY - 0.12
-      topY = clamp(topY, baseY + 0.1, baseY + 4.0)
-      const midY = baseY + (topY - baseY) * 0.52 + clamp(frameMm, -100, 100) * 0.015
+      const scenePerMm = MILLIMETRES_TO_SCENE * motionGain
+      let topY = 3.25 + clamp(headMm, -100, 100) * scenePerMm
+      const wireY = 3.25 + clamp(wireMm, -100, 100) * scenePerMm
+      const visibleContactGap = 2 * scenePerMm
+      if (lost && topY > wireY - visibleContactGap) {
+        topY = wireY - visibleContactGap
+      }
+      topY = clamp(topY, baseY + 0.5, baseY + 2.5)
+      const midY = baseY + (topY - baseY) * 0.52 + clamp(frameMm, -100, 100) * scenePerMm
 
       const sides = [-0.34, 0.34]
       let index = 0
@@ -190,7 +195,7 @@ function makePantograph(isActive) {
       arc.visible = lost
       if (lost) {
         const positions = arc.geometry.attributes.position.array
-        const gapTop = Math.max(wireY, topY + 0.24)
+        const gapTop = Math.max(wireY, topY + visibleContactGap)
         for (let i = 0; i < 5; i += 1) {
           const k = i / 4
           positions[i * 3] = (i === 0 || i === 4 || reduced) ? 0 : (Math.random() - 0.5) * 0.18
@@ -303,11 +308,18 @@ function makeLane(source, laneZ, isActive) {
   return { root, pantograph }
 }
 
-export default function World3D({ frameRef, prefersReducedMotion, showPhysics = true, cameraReset = 0 }) {
+export default function World3D({
+  frameRef,
+  prefersReducedMotion,
+  showPhysics = true,
+  motionGain = 1,
+  cameraReset = 0,
+}) {
   const mountRef = useRef(null)
   const controlsRef = useRef(null)
   const reducedRef = useRef(prefersReducedMotion)
   const physicsRef = useRef(showPhysics)
+  const motionGainRef = useRef(motionGain)
   const frame = useThrottledFrame(frameRef, 10)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -319,6 +331,10 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
   useEffect(() => {
     physicsRef.current = showPhysics
   }, [showPhysics])
+
+  useEffect(() => {
+    motionGainRef.current = motionGain
+  }, [motionGain])
 
   useEffect(() => {
     if (cameraReset > 0) controlsRef.current?.reset()
@@ -424,11 +440,16 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
 
       for (let i = 0; i < tracks.length; i += 1) tracks[i].update(trackOffset)
       for (let i = 0; i < laneData.length; i += 1) {
-        const result = laneData[i].pantograph.update(systems[i], current, physicsRef.current, reducedRef.current)
+        const result = laneData[i].pantograph.update(
+          systems[i],
+          current,
+          physicsRef.current,
+          reducedRef.current,
+          motionGainRef.current,
+        )
         const contactX = PANTOGRAPH_X
         const contactY = result.lost ? result.wireY : result.topY + 0.065
         wires[i].update(contactX, result.wireY, contactY, result.lost)
-        if (!reducedRef.current) laneData[i].root.position.y = Math.sin(elapsed * 2.2 + i) * 0.008
       }
 
       controls.enableDamping = !reducedRef.current
@@ -469,6 +490,11 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
       )}
       <LaneHud label="PASSIVE" system={passive} side="left" />
       <LaneHud label="AeroPINN" system={active} side="right" active />
+      {motionGain > 1 && (
+        <div className="motion-scale mono">
+          MOTION AMPLIFIED ×{motionGain} · METRICS UNSCALED
+        </div>
+      )}
       <div className="world3d-nav-hint mono">
         DRAG ORBIT · WHEEL ZOOM · RIGHT-DRAG PAN · DOUBLE-CLICK RESET
       </div>

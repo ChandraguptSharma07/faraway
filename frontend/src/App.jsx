@@ -12,6 +12,7 @@ export default function App() {
   const [showCred, setShowCred] = useState(false)
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [showPhysics, setShowPhysics] = useState(true)
+  const [amplifyMotion, setAmplifyMotion] = useState(false)
   const [cameraReset, setCameraReset] = useState(0)
 
   useEffect(() => {
@@ -44,6 +45,7 @@ export default function App() {
           frameRef={frameRef}
           prefersReducedMotion={reduced}
           showPhysics={showPhysics}
+          motionGain={amplifyMotion ? 25 : 1}
           cameraReset={cameraReset}
         />
         <div className="view-tools">
@@ -53,6 +55,14 @@ export default function App() {
             title="Toggle live force vectors"
           >
             FORCES {showPhysics ? 'ON' : 'OFF'}
+          </button>
+          <button
+            className={`motion-toggle ${amplifyMotion ? 'on' : ''}`}
+            onClick={() => setAmplifyMotion((value) => !value)}
+            title="Toggle labelled visual displacement amplification; telemetry remains unscaled"
+            aria-pressed={amplifyMotion}
+          >
+            MOTION {amplifyMotion ? '×25' : '1×'}
           </button>
           <button className="camera-reset" onClick={() => setCameraReset((v) => v + 1)}>
             RESET VIEW
