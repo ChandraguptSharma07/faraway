@@ -13,6 +13,7 @@ All notable changes to this project will be documented in this file.
 - Increased shadow simulation duration to 3.0s to allow startup transients to decay in the distributed solver.
 - Restored sourced catenary parameters and strict contact-loss agreement gates in shadow comparisons.
 - Stabilized MPC candidate selection against sub-resolution numerical cost ties using minimum-effort resolution.
+- Aligned controller evidence with the deployed 25 N, 18 ms, sensor/EKF and actuator-in-loop configuration.
 
 ### Fixed
 - Fixed an `ImportError` for `libstdc++.so.6` on NixOS by patching `run_local.sh` to inject the correct `LD_LIBRARY_PATH`.

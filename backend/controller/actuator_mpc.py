@@ -16,9 +16,16 @@ import numpy as np
 
 from backend.controller.actuator import ForceActuator
 from backend.controller.selection import minimum_effort_near_optimum
+from backend.controller.timing import PeriodicScheduler
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
 from backend.sim.parameters import BeyondEnvelope
+
+
+DEPLOYED_CONTROL_PERIOD = 18.0e-3
+DEPLOYED_COMMAND_LIMIT = 25.0
+DEPLOYED_CANDIDATES = 21
+DEPLOYED_ROLLOUT_STEPS = 18
 
 
 class ActuatorAwarePINNMPC:
@@ -40,6 +47,8 @@ class ActuatorAwarePINNMPC:
         w_wave_velocity: float = 2.0e-3,
         command_limit: float | None = None,
         force_resolution: float = 0.10,
+        force_bias_time_constant: float = 0.25,
+        force_bias_limit: float = 10.0,
     ):
         self.pred = predictor
         self.actuator = actuator
@@ -64,23 +73,42 @@ class ActuatorAwarePINNMPC:
         self.w_wave_velocity = w_wave_velocity
         if force_resolution <= 0.0:
             raise ValueError("force_resolution must be positive")
+        if force_bias_time_constant <= 0.0 or force_bias_limit < 0.0:
+            raise ValueError("force-bias dynamics must be positive and bounded")
         tracking_weight_sum = sum(
             0.5 + (step + 1) / rollout_steps
             for step in range(rollout_steps)
         )
         self.cost_tie_tolerance = tracking_weight_sum * force_resolution ** 2
+        self.force_bias_alpha = 1.0 - np.exp(
+            -self.control_period / force_bias_time_constant
+        )
+        self.force_bias_limit = float(force_bias_limit)
+        self.force_bias_correction = 0.0
         self._last_command = 0.0
-        self._last_t = -1e9
+        self._scheduler = PeriodicScheduler(self.control_period)
         self._held = 0.0
         self.last_latency_ms = 0.0
         self._latencies = deque(maxlen=500)
         self._deadline_misses = deque(maxlen=500)
 
-    def __call__(self, t: float, state, _force: float) -> float:
-        if t - self._last_t < self.control_period:
+    def __call__(self, t: float, state, measured_force: float | None) -> float:
+        if not self._scheduler.due(t):
             return self._held
-        self._last_t = t
         started = time.perf_counter()
+
+        if measured_force is not None and np.isfinite(measured_force):
+            error = self.setpoint - float(measured_force)
+            filtered = (
+                (1.0 - self.force_bias_alpha) * self.force_bias_correction
+                + self.force_bias_alpha * error
+            )
+            self.force_bias_correction = float(np.clip(
+                filtered,
+                -self.force_bias_limit,
+                self.force_bias_limit,
+            ))
+        rollout_setpoint = self.setpoint + self.force_bias_correction
 
         applied = self.actuator.preview_profiles(
             self.candidates, self.pred.H, self.rollout_steps
@@ -154,7 +182,7 @@ class ActuatorAwarePINNMPC:
                 )
             # Later samples matter more: early samples are mostly fixed by delay.
             weight = 0.5 + (step + 1) / self.rollout_steps
-            tracking_cost += weight * (predicted_force - self.setpoint) ** 2
+            tracking_cost += weight * (predicted_force - rollout_setpoint) ** 2
 
         cost = (
             tracking_cost

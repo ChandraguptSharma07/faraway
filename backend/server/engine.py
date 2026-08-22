@@ -17,7 +17,13 @@ from backend.controller.actuator import (
     ActuatorParams,
     ForceActuator,
 )
-from backend.controller.actuator_mpc import ActuatorAwarePINNMPC
+from backend.controller.actuator_mpc import (
+    DEPLOYED_CANDIDATES,
+    DEPLOYED_COMMAND_LIMIT,
+    DEPLOYED_CONTROL_PERIOD,
+    DEPLOYED_ROLLOUT_STEPS,
+    ActuatorAwarePINNMPC,
+)
 from backend.controller.environment import CatenaryPrior
 from backend.controller.mpc import PINNMPCController
 from backend.controller.observer import PantographEKF
@@ -139,12 +145,12 @@ class Engine:
             speed_ms,
             self.rp.beyond(),
             setpoint=self.setpoint,
-            n_candidates=21,
-            rollout_steps=18,
-            control_period=18.0e-3,
+            n_candidates=DEPLOYED_CANDIDATES,
+            rollout_steps=DEPLOYED_ROLLOUT_STEPS,
+            control_period=DEPLOYED_CONTROL_PERIOD,
             w_rate=1.5e-3,
             wire_estimate=self.wire_estimate,
-            command_limit=25.0,
+            command_limit=DEPLOYED_COMMAND_LIMIT,
             force_resolution=self.sensor_params.force_resolution,
         )
 
@@ -339,7 +345,9 @@ class Engine:
             self.estimator_fallback = not estimator_healthy
             if estimator_healthy:
                 self.f_command = self.controller(
-                    self.t, self.observer.state.copy(), 0.0
+                    self.t,
+                    self.observer.state.copy(),
+                    self.estimated_contact_force,
                 )
             else:
                 # Removing active force is the fail-safe behavior of this simulation;
@@ -479,6 +487,9 @@ class Engine:
                 "latency_p99_ms": round(timing["latency_p99_ms"], 3),
                 "deadline_miss_pct": round(timing["deadline_miss_pct"], 2),
                 "samples": timing["samples"],
+                "force_bias_correction_N": round(
+                    self.controller.force_bias_correction, 3
+                ),
             },
             "state_estimation": {
                 **observer,

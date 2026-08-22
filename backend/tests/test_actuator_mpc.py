@@ -1,6 +1,7 @@
 import numpy as np
 
 from backend.controller.selection import minimum_effort_near_optimum
+from backend.controller.timing import PeriodicScheduler
 from backend.controller.robustness import (
     ACTUATOR_SWEEP,
     OPERATING_SCENARIOS,
@@ -16,6 +17,18 @@ def test_near_optimal_selection_ignores_sub_resolution_cost_flips():
 
     assert minimum_effort_near_optimum(first, candidates, 0.185, 68.74) == 1
     assert minimum_effort_near_optimum(perturbed, candidates, 0.185, 68.74) == 1
+
+
+def test_periodic_scheduler_is_independent_of_integration_step():
+    schedules = []
+    for dt in (1.0e-3, 5.0e-4, 2.5e-4):
+        scheduler = PeriodicScheduler(18.0e-3)
+        schedules.append([
+            round(step * dt, 6)
+            for step in range(int(0.1 / dt) + 1)
+            if scheduler.due(step * dt)
+        ])
+    assert schedules[0] == schedules[1] == schedules[2]
 
 
 def test_batched_finite_difference_state_matches_autograd_prediction():

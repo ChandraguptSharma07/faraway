@@ -72,11 +72,64 @@ def run_comparison(
 
     mp, ma = metrics(passive), metrics(aeropinn)
     return {
+        "mode": "REDUCED_TRUTH_STATE_DIAGNOSTIC",
         "speed_kmh": speed_kmh,
         "passive": mp,
         "aeropinn": ma,
         "passive_res": passive,
         "aeropinn_res": aeropinn,
+    }
+
+
+def run_live_comparison(
+    speed_kmh: float,
+    beyond: BeyondEnvelope | None = None,
+    duration: float = 2.0,
+    settle_duration: float = 1.0,
+    seed: int = 999,
+    predictor: PINNPredictor | None = None,
+):
+    """Exercise the same coupled, estimated-state controller used by the server."""
+    from backend.server.engine import Engine
+
+    beyond = beyond or BeyondEnvelope()
+    engine = Engine(seed=seed, predictor=predictor or PINNPredictor())
+    engine.set_speed(speed_kmh)
+    engine.set_tension(beyond.tension_factor)
+    engine.set_turbulence(beyond.turbulence_gain)
+    engine.step(int(round(settle_duration / engine.dt)))
+    if beyond.gust:
+        # Keep startup equilibration out of the scored window, but preserve the
+        # requested transient in the actual comparison interval.
+        engine.trigger_gust(beyond.gust)
+
+    count = int(round(duration / engine.dt))
+    passive = np.empty(count)
+    active = np.empty(count)
+    for index in range(count):
+        engine.step()
+        passive[index] = engine.force_p
+        active[index] = engine.force_a
+
+    def force_metrics(values):
+        return {
+            "mean_N": float(np.mean(values)),
+            "std_N": float(np.std(values)),
+            "loss_of_contact_pct": 100.0 * float(np.mean(values <= 0.0)),
+        }
+
+    return {
+        "mode": "DEPLOYED_SIMULATION_PATH",
+        "speed_kmh": speed_kmh,
+        "passive": force_metrics(passive),
+        "aeropinn": force_metrics(active),
+        "control": {
+            "period_ms": 1.0e3 * engine.controller.control_period,
+            "authority_N": engine.controller.command_limit,
+            "state_input": "SENSOR_EKF_ESTIMATE",
+            "actuator_in_loop": True,
+        },
+        "timing": engine.controller.timing_metrics(),
     }
 
 

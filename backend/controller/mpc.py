@@ -19,6 +19,7 @@ import numpy as np
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
 from backend.controller.selection import minimum_effort_near_optimum
+from backend.controller.timing import PeriodicScheduler
 from backend.sim.disturbance import Disturbance
 from backend.sim.parameters import BeyondEnvelope
 
@@ -55,7 +56,7 @@ class PINNMPCController:
         self.cost_tie_tolerance = force_resolution ** 2
 
         self._last_fc = 0.0
-        self._last_t = -1e9
+        self._scheduler = PeriodicScheduler(self.control_period)
         self._held = 0.0
         self.last_latency_ms = 0.0  # full time of the latest control update
         self._latencies = deque(maxlen=500)
@@ -63,9 +64,8 @@ class PINNMPCController:
 
     def __call__(self, t: float, state, force: float) -> float:
         # Receding-horizon: only re-optimise every control_period; hold otherwise.
-        if t - self._last_t < self.control_period:
+        if not self._scheduler.due(t):
             return self._held
-        self._last_t = t
 
         t0 = time.perf_counter()
         fa = self.dist.aero_force(self.speed_ms, self.beyond)

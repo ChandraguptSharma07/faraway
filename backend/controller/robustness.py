@@ -86,7 +86,13 @@ def evaluate_promotion(
 def run_uncertainty_sweep(duration: float = 6.0, seed: int = 999) -> list[dict]:
     """Reproduce the 3–10 Hz / 2–15 ms actuator robustness experiment."""
     from backend.controller.actuator import ActuatorParams, ForceActuator
-    from backend.controller.actuator_mpc import ActuatorAwarePINNMPC
+    from backend.controller.actuator_mpc import (
+        DEPLOYED_CANDIDATES,
+        DEPLOYED_COMMAND_LIMIT,
+        DEPLOYED_CONTROL_PERIOD,
+        DEPLOYED_ROLLOUT_STEPS,
+        ActuatorAwarePINNMPC,
+    )
     from backend.pinn.predict import PINNPredictor
     from backend.sim.disturbance import Disturbance
     from backend.sim.parameters import (
@@ -126,10 +132,11 @@ def run_uncertainty_sweep(duration: float = 6.0, seed: int = 999) -> list[dict]:
                 dist,
                 speed_ms,
                 beyond,
-                n_candidates=21,
-                rollout_steps=18,
-                control_period=10.0e-3,
+                n_candidates=DEPLOYED_CANDIDATES,
+                rollout_steps=DEPLOYED_ROLLOUT_STEPS,
+                control_period=DEPLOYED_CONTROL_PERIOD,
                 w_rate=1.5e-3,
+                command_limit=DEPLOYED_COMMAND_LIMIT,
             )
 
             def applied_force(t, state, force):

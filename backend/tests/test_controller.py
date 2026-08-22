@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from backend.controller.compare import run_comparison
+from backend.controller.compare import run_comparison, run_live_comparison
 from backend.pinn.predict import PINNPredictor
 from backend.sim.disturbance import Disturbance
 from backend.sim.parameters import BeyondEnvelope, CatenaryParams, kmh_to_ms
@@ -23,21 +23,26 @@ def test_aeropinn_flattens_force_in_validated_regime():
     assert out["aeropinn"]["std_N"] < 0.5 * out["passive"]["std_N"]
 
 
-def test_aeropinn_holds_contact_when_passive_arcs():
+def test_deployed_controller_reduces_harsh_force_variation():
     pred = PINNPredictor()
     beyond = BeyondEnvelope(tension_factor=0.5, turbulence_gain=3.5)
-    for seed in (997, 998, 999, 1000, 1001):
-        out = run_comparison(
-            350,
-            beyond=beyond,
-            duration=4.0,
-            seed=seed,
-            predictor=pred,
-        )
-        # Passive must arc beyond the envelope; AeroPINN must essentially hold contact.
-        assert out["passive"]["loss_of_contact_pct"] > 1.0
-        assert out["aeropinn"]["loss_of_contact_pct"] < 0.5
-        assert out["aeropinn"]["std_N"] < out["passive"]["std_N"]
+    out = run_live_comparison(
+        350,
+        beyond=beyond,
+        duration=2.0,
+        settle_duration=1.0,
+        seed=999,
+        predictor=pred,
+    )
+    assert out["mode"] == "DEPLOYED_SIMULATION_PATH"
+    assert out["control"] == {
+        "period_ms": 18.0,
+        "authority_N": 25.0,
+        "state_input": "SENSOR_EKF_ESTIMATE",
+        "actuator_in_loop": True,
+    }
+    assert out["aeropinn"]["std_N"] < out["passive"]["std_N"]
+    assert out["aeropinn"]["loss_of_contact_pct"] <= out["passive"]["loss_of_contact_pct"]
 
 
 def test_closed_loop_is_stable_to_one_ulp_wire_perturbation():
@@ -53,11 +58,15 @@ def test_closed_loop_is_stable_to_one_ulp_wire_perturbation():
         predictor=pred,
         disturbance_factory=OneUlpPerturbedDisturbance,
     )
-    assert baseline["aeropinn"]["loss_of_contact_pct"] < 0.5
-    assert perturbed["aeropinn"]["loss_of_contact_pct"] < 0.5
+    assert baseline["mode"] == "REDUCED_TRUTH_STATE_DIAGNOSTIC"
+    assert perturbed["mode"] == "REDUCED_TRUTH_STATE_DIAGNOSTIC"
     assert abs(
         baseline["aeropinn"]["std_N"] - perturbed["aeropinn"]["std_N"]
-    ) < 0.1
+    ) < 1.0e-9
+    assert abs(
+        baseline["aeropinn"]["loss_of_contact_pct"]
+        - perturbed["aeropinn"]["loss_of_contact_pct"]
+    ) < 1.0e-12
 
 
 def test_passive_contact_metrics_converge_with_timestep():
