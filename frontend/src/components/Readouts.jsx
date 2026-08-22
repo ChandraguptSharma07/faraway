@@ -21,7 +21,7 @@ export default function Readouts({ frameRef }) {
         <Stat label="DEADLINE MISS" value={timing ? timing.deadline_miss_pct.toFixed(1) : '—'} unit="%"
               warn={timing && timing.deadline_miss_pct > 0} accent={timing && timing.deadline_miss_pct === 0} />
         <Stat label="OPERATING POINT" value={f ? (f.operating_status ?? (beyond ? 'OUTSIDE_ENVELOPE' : 'NOMINAL')).replace('_', ' ') : '—'}
-              text warn={beyond} />
+              text warn={beyond} ariaLive="polite" />
       </div>
 
       <div className="compare-card">
@@ -43,15 +43,16 @@ export default function Readouts({ frameRef }) {
   )
 }
 
-function Stat({ label, value, unit, accent, warn, text }) {
+function Stat({ label, value, unit, accent, warn, text, ariaLive }) {
   const cls = ['stat']
   if (accent) cls.push('accent')
   if (warn) cls.push('warn')
   return (
-    <div className={cls.join(' ')}>
+    <div className={cls.join(' ')} aria-live={ariaLive}>
       <div className="stat-label">{label}</div>
       <div className="stat-value mono">
         {value}{!text && <span className="stat-unit"> {unit}</span>}
+        {warn && <span className="sr-only"> (Warning)</span>}
       </div>
     </div>
   )
@@ -61,8 +62,14 @@ function CompareRow({ label, pv, av, unit, pDanger, aDanger }) {
   return (
     <div className="compare-row">
       <span className="compare-label">{label}</span>
-      <span className={`compare-value passive ${pDanger ? 'danger' : ''}`}><b className="mono">{pv}</b> {unit}</span>
-      <span className={`compare-value aero ${aDanger ? 'danger' : ''}`}><b className="mono">{av}</b> {unit}</span>
+      <span className={`compare-value passive ${pDanger ? 'danger' : ''}`}>
+        <b className="mono">{pv}</b> {unit}
+        {pDanger && <span className="sr-only"> (Danger)</span>}
+      </span>
+      <span className={`compare-value aero ${aDanger ? 'danger' : ''}`}>
+        <b className="mono">{av}</b> {unit}
+        {aDanger && <span className="sr-only"> (Danger)</span>}
+      </span>
     </div>
   )
 }

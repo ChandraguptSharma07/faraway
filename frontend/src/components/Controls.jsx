@@ -66,17 +66,19 @@ export default function Controls({ send }) {
 
 function Slider({ label, value, min, max, step, unit, fmt, onChange }) {
   const pct = ((value - min) / (max - min)) * 100
+  const displayValue = fmt ? fmt(value) : `${value}${unit ? ' ' + unit : ''}`
   return (
     <div className="slider">
       <div className="slider-top">
         <span className="slider-label">{label}</span>
-        <span className="slider-value mono">{fmt ? fmt(value) : `${value}${unit ? ' ' + unit : ''}`}</span>
+        <span className="slider-value mono">{displayValue}</span>
       </div>
       <input
         type="range" min={min} max={max} step={step} value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
         style={{ '--pct': pct + '%' }}
         aria-label={label}
+        aria-valuetext={displayValue}
       />
     </div>
   )

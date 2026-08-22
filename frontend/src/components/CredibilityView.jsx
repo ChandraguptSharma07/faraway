@@ -96,21 +96,24 @@ export default function CredibilityView({ onClose }) {
 function ValTable({ speed, data }) {
   const allPass = data.rows.every((r) => r.pass)
   return (
-    <div className="val-table">
-      <div className="val-th">
-        <span>{speed} km/h</span>
-        <span className={`val-badge ${allPass ? 'pass' : 'fail'}`}>
+    <div className="val-table" role="table" aria-label={`EN 50318 Validation ${speed} km/h`}>
+      <div className="val-th" role="row">
+        <span role="columnheader">{speed} km/h</span>
+        <span className={`val-badge ${allPass ? 'pass' : 'fail'}`} role="columnheader">
           {allPass ? 'VALIDATED' : 'CHECK'}
         </span>
       </div>
       {data.rows.map((r) => (
-        <div className="val-row" key={r.metric}>
-          <span className="val-metric">{METRIC_LABELS[r.metric]}</span>
-          <span className="val-value mono">{r.value}{METRIC_UNITS[r.metric]}</span>
-          <span className="val-range mono">
+        <div className="val-row" key={r.metric} role="row">
+          <span className="val-metric" role="cell">{METRIC_LABELS[r.metric]}</span>
+          <span className="val-value mono" role="cell">{r.value}{METRIC_UNITS[r.metric]}</span>
+          <span className="val-range mono" role="cell">
+            <span className="sr-only">Range: </span>
             {r.low === r.high ? '0' : `${r.low}–${r.high}`}
           </span>
-          <span className={`val-dot ${r.pass ? 'pass' : 'fail'}`} />
+          <span className={`val-dot ${r.pass ? 'pass' : 'fail'}`} role="cell">
+            <span className="sr-only">{r.pass ? 'Pass' : 'Fail'}</span>
+          </span>
         </div>
       ))}
     </div>
@@ -173,20 +176,25 @@ function ShadowCard({ report }) {
 
   const keyMetrics = ['mean_N', 'std_N', 'loss_of_contact_pct']
   return (
-    <div className="shadow-card">
+    <div className="shadow-card" role="table" aria-label={`Shadow Validation ${report.speed_kmh} km/h`}>
       <div className="shadow-head">
         <b>{report.speed_kmh} km/h</b>
         <span className={`shadow-status ${stateClass}`}>{report.status}</span>
       </div>
-      <div className="shadow-model-head mono"><span>METRIC</span><span>REDUCED</span><span>DISTRIBUTED</span><span>Δ</span></div>
+      <div className="shadow-model-head mono" role="row">
+        <span role="columnheader">METRIC</span>
+        <span role="columnheader">REDUCED</span>
+        <span role="columnheader">DISTRIBUTED</span>
+        <span role="columnheader">Δ</span>
+      </div>
       {keyMetrics.map((key) => {
         const metric = report.metrics[key]
         return (
-          <div className="shadow-metric mono" key={key}>
-            <span>{METRIC_LABELS[key]}</span>
-            <span>{metric.legacy.toFixed(1)}{METRIC_UNITS[key]}</span>
-            <span>{metric.distributed.toFixed(1)}{METRIC_UNITS[key]}</span>
-            <span>{metric.difference_pct.toFixed(1)}%</span>
+          <div className="shadow-metric mono" key={key} role="row">
+            <span role="cell">{METRIC_LABELS[key]}</span>
+            <span role="cell">{metric.legacy.toFixed(1)}{METRIC_UNITS[key]}</span>
+            <span role="cell">{metric.distributed.toFixed(1)}{METRIC_UNITS[key]}</span>
+            <span role="cell">{metric.difference_pct.toFixed(1)}%</span>
           </div>
         )
       })}

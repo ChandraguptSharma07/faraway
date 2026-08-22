@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { useThrottledFrame } from '../hooks/useTelemetry'
@@ -88,14 +88,27 @@ export default function ForceTrace({ historyRef, frameRef }) {
     return () => { cancelAnimationFrame(raf); ro.disconnect(); u.destroy() }
   }, [historyRef])
 
+  const [srSummary, setSrSummary] = useState('')
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (frameRef.current) {
+        const f = frameRef.current
+        setSrSummary(`Contact force: Passive ${f.passive.contact_force.toFixed(0)} N, AeroPINN ${f.aeropinn.contact_force.toFixed(0)} N.`)
+      }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [frameRef])
+
   return (
     <div className="trace-shell">
-      <div className="trace-legend mono">
+      <div className="sr-only" aria-live="polite">{srSummary}</div>
+      <div className="trace-legend mono" aria-hidden="true">
         <span className="legend-item passive"><i />PASSIVE <b>{frame ? frame.passive.contact_force.toFixed(0) : '—'} N</b></span>
         <span className="legend-item aero"><i />AeroPINN <b>{frame ? frame.aeropinn.contact_force.toFixed(0) : '—'} N</b></span>
         <span className="legend-setpoint">SETPOINT {frame ? frame.setpoint_N.toFixed(0) : '115'} N</span>
       </div>
-      <div className="trace-wrap" ref={wrapRef} />
+      <div className="trace-wrap" ref={wrapRef} aria-hidden="true" />
     </div>
   )
 }
