@@ -139,11 +139,11 @@ function makePantograph(isActive) {
       const lost = system?.contact_lost ?? false
       const frameMm = system?.frame_mm ?? 0
       const baseY = 2.0
-      let topY = 3.25 + clamp(headMm, -25, 25) * 0.022
-      const wireY = 3.25 + clamp(wireMm, -25, 25) * 0.022
+      let topY = 3.25 + clamp(headMm, -100, 100) * 0.05
+      const wireY = 3.25 + clamp(wireMm, -100, 100) * 0.05
       if (lost && topY > wireY - 0.12) topY = wireY - 0.12
-      topY = clamp(topY, baseY + 0.72, baseY + 2.05)
-      const midY = baseY + (topY - baseY) * 0.52 + clamp(frameMm, -25, 25) * 0.003
+      topY = clamp(topY, baseY + 0.1, baseY + 4.0)
+      const midY = baseY + (topY - baseY) * 0.52 + clamp(frameMm, -100, 100) * 0.015
 
       const sides = [-0.34, 0.34]
       let index = 0
