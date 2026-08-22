@@ -78,9 +78,16 @@ export default function ForceTrace({ historyRef, frameRef }) {
     ro.observe(wrap)
 
     let raf
+    let lastTime = 0
     const tick = () => {
       const h = historyRef.current
-      if (h.t.length > 1) u.setData([h.t, h.fp, h.fa])
+      if (h.t.length > 1) {
+        const currentLastTime = h.t[h.t.length - 1]
+        if (currentLastTime !== lastTime) {
+          u.setData([h.t, h.fp, h.fa])
+          lastTime = currentLastTime
+        }
+      }
       raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)

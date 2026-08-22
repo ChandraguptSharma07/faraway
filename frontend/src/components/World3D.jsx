@@ -274,7 +274,13 @@ function makeTrack(laneZ) {
 function keepLeadCar(scene) {
   const root = scene.getObjectByName('RootNode')
   if (!root) return
-  for (const child of root.children) child.visible = child.name === 'kuz'
+  const toRemove = []
+  for (const child of root.children) {
+    if (child.name !== 'kuz') toRemove.push(child)
+  }
+  for (const child of toRemove) {
+    child.removeFromParent()
+  }
 }
 
 function makeLane(source, laneZ, isActive) {
