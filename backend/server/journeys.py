@@ -37,6 +37,7 @@ FIELD_DOCUMENTATION = {
     "telemetry.aeropinn.f_command": "Controller-requested actuator force in newtons.",
     "telemetry.aeropinn.f_actuator_estimate": "Simulated actuator applied-force estimate in newtons.",
     "telemetry.pinn_latency_ms": "Most recent PINN inference time in milliseconds.",
+    "constants": "Periodic configuration snapshot used to reproduce the simulation.",
 }
 DEFAULT_METADATA = {
     "train_name": "Lastochka",
@@ -365,7 +366,12 @@ class JourneyStore:
             raise ValueError("cursor cannot be negative")
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        if stream not in {None, "physics_audit_1khz", "dashboard_frame_30hz"}:
+        if stream not in {
+            None,
+            "physics_audit_1khz",
+            "dashboard_frame_30hz",
+            "configuration_snapshot_1hz",
+        }:
             raise ValueError("unsupported telemetry stream")
         if source == "events" and stream is not None:
             raise ValueError("stream filtering only applies to telemetry")
@@ -457,6 +463,14 @@ class JourneyStore:
                     stream="dashboard_frame_30hz",
                 )
                 add(generated)
+                generated = work / "constants_1hz.csv"
+                self._write_csv_snapshot(
+                    telemetry_path,
+                    telemetry_size,
+                    generated,
+                    stream="configuration_snapshot_1hz",
+                )
+                add(generated)
                 generated = work / "events.csv"
                 self._write_csv_snapshot(events_path, events_size, generated)
                 add(generated)
@@ -474,7 +488,8 @@ class JourneyStore:
                         "Persistent simulation telemetry for asynchronous, screen-reader-compatible review.\n"
                         "The manifest records provenance and integrity hashes. CSV files provide flat tables; "
                         "JSON files preserve complete nested telemetry. The physics and dashboard CSV files "
-                        "separate native 1 kHz audit samples from complete 30 Hz UI frames.\n"
+                        "separate native 1 kHz audit samples from complete 30 Hz UI frames; "
+                        "constants_1hz.csv records the reproducibility configuration.\n"
                     ),
                 }
                 fields = self._snapshot_fields(telemetry_path, telemetry_size)
@@ -640,10 +655,12 @@ class JourneySession:
         self.sample_count = 0
         self.frame_count = 0
         self.physics_count = 0
+        self.constants_count = 0
         self._stats_count = 0
         self.event_count = 0
         self.distance_m = 0.0
         self._last_t: float | None = None
+        self._last_constants_t: float | None = None
         self._force_stats = {
             "passive": {"mean": 0.0, "m2": 0.0, "loss": 0, "min": None, "max": None},
             "aeropinn": {"mean": 0.0, "m2": 0.0, "loss": 0, "min": None, "max": None},
@@ -731,6 +748,31 @@ class JourneySession:
         }, location)
         if self.physics_count % 1000 == 0:
             self._checkpoint()
+        return record
+
+    def record_constants(self, snapshot: dict, period_s: float = 1.0) -> dict | None:
+        """Persist configuration at a bounded cadence for later reproducibility."""
+        if self._closed:
+            raise RuntimeError("journey is closed")
+        simulation_t = float(snapshot["t_s"])
+        if (
+            self._last_constants_t is not None
+            and simulation_t - self._last_constants_t < period_s
+        ):
+            return None
+        operating = snapshot["operating_configuration"]
+        record = {
+            "schema_version": SCHEMA_VERSION,
+            "stream": "configuration_snapshot_1hz",
+            "session_id": self.id,
+            "recorded_at": _utc_now(),
+            "sampling_period_s": period_s,
+            "location": self._location(simulation_t, float(operating["speed_kmh"])),
+            "constants": snapshot,
+        }
+        self._write_record(record)
+        self.constants_count += 1
+        self._last_constants_t = simulation_t
         return record
 
     def _location(self, simulation_t: float, speed_kmh: float) -> dict:
@@ -867,6 +909,7 @@ class JourneySession:
             "sample_streams": {
                 "physics_audit_1khz": self.physics_count,
                 "dashboard_frame_30hz": self.frame_count,
+                "configuration_snapshot_1hz": self.constants_count,
             },
             "controller": {
                 "command_limit_samples": self._saturated_samples,
@@ -931,6 +974,7 @@ def ensure_sample_journey(store: JourneyStore, predictor) -> str | None:
                 "schema_version": SCHEMA_VERSION,
             }
             journey.record(frame)
+            journey.record_constants(engine.constants_snapshot())
 
     try:
         journey.event("SCENARIO_PHASE", {"name": "nominal baseline"})

@@ -76,6 +76,7 @@ def test_csv_and_audit_package_are_accessible_and_self_documenting(tmp_path):
             "telemetry.csv",
             "physics_1khz.csv",
             "dashboard_30hz.csv",
+            "constants_1hz.csv",
             "telemetry.json",
             "events.csv",
             "events.json",
@@ -200,3 +201,35 @@ def test_exports_stream_without_materializing_full_ndjson(tmp_path, monkeypatch)
     assert csv_path.stat().st_size > 0
     assert json.loads(json_path.read_text())["telemetry"]
     assert zipfile.is_zipfile(package)
+
+
+def test_configuration_constants_are_recorded_once_per_second(tmp_path):
+    store = JourneyStore(tmp_path)
+    journey = store.create()
+
+    def snapshot(t, tension=20_000.0):
+        return {
+            "t_s": t,
+            "controller": {"setpoint_N": 115.0},
+            "distributed_catenary": {"contact_tension": tension},
+            "solver": {"integration_step_s": 0.001},
+            "actuator": {"response_time": 0.04},
+            "operating_configuration": {"speed_kmh": 250.0},
+        }
+
+    assert journey.record_constants(snapshot(0.0)) is not None
+    assert journey.record_constants(snapshot(0.5)) is None
+    assert journey.record_constants(snapshot(1.0, tension=18_000.0)) is not None
+    journey.finalize()
+
+    saved = store.get(journey.id)
+    assert saved["summary"]["sample_streams"]["configuration_snapshot_1hz"] == 2
+    page = store.page(
+        journey.id,
+        "telemetry",
+        stream="configuration_snapshot_1hz",
+    )
+    assert [
+        row["constants"]["distributed_catenary"]["contact_tension"]
+        for row in page["records"]
+    ] == [20_000.0, 18_000.0]

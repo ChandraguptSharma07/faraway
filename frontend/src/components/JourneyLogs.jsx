@@ -263,7 +263,7 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
                 <ul className="export-guide">
                   <li><b>CSV:</b> flat telemetry for spreadsheets and analysis tools.</li>
                   <li><b>JSON:</b> complete nested journey, event, and telemetry records.</li>
-                  <li><b>Audit package:</b> both formats plus summary, data dictionary, manifest, and integrity hashes.</li>
+                  <li><b>Audit package:</b> both formats plus constants, summary, data dictionary, manifest, and integrity hashes.</li>
                 </ul>
                 <div className="journey-downloads">
                   {['csv', 'json', 'audit'].map((format) => (
@@ -348,6 +348,7 @@ function ForceSummary({ summary }) {
 const RECORD_VIEWS = [
   { label: 'EVENTS', source: 'events' },
   { label: 'PHYSICS 1 KHZ', source: 'telemetry', stream: 'physics_audit_1khz' },
+  { label: 'CONSTANTS 1 HZ', source: 'telemetry', stream: 'configuration_snapshot_1hz' },
   { label: 'DASHBOARD FRAMES', source: 'telemetry', stream: 'dashboard_frame_30hz' },
 ]
 
@@ -375,10 +376,15 @@ function RecordBrowser({ page, label, canGoBack, onBack, onNext }) {
 
 function RecordItem({ record }) {
   const physics = record.physics
+  const constants = record.constants
   const telemetry = record.telemetry
   const simulationTime = physics?.t_s ?? telemetry?.t ?? record.details?.simulation_t_s
   const title = record.event_type ?? (
-    record.stream === 'physics_audit_1khz' ? 'Physics sample' : 'Dashboard frame'
+    record.stream === 'physics_audit_1khz'
+      ? 'Physics sample'
+      : record.stream === 'configuration_snapshot_1hz'
+        ? 'Configuration snapshot'
+        : 'Dashboard frame'
   )
   return (
     <li>
@@ -392,6 +398,12 @@ function RecordItem({ record }) {
         <Fact label="Passive force" value={`${physics.passive.contact_force_N.toFixed(2)} N`} />
         <Fact label="AeroPINN force" value={`${physics.aeropinn.contact_force_N.toFixed(2)} N`} />
         <Fact label="Command" value={`${physics.aeropinn.command_force_N.toFixed(2)} N`} />
+      </dl>}
+      {constants && <dl className="record-metrics">
+        <Fact label="Setpoint" value={`${constants.controller.setpoint_N} N`} />
+        <Fact label="Integration step" value={`${constants.solver.integration_step_s} s`} />
+        <Fact label="Contact tension" value={`${constants.distributed_catenary.contact_tension} N`} />
+        <Fact label="Actuator response" value={`${constants.actuator.response_time} s`} />
       </dl>}
       <details>
         <summary>View complete raw record</summary>

@@ -51,6 +51,17 @@ def test_engine_emits_one_native_rate_audit_sample_per_step():
     assert samples[-1]["timing"]["control_authority_N"] == 25.0
 
 
+def test_engine_exposes_reproducibility_constants_snapshot():
+    engine = Engine()
+    snapshot = engine.constants_snapshot()
+
+    assert snapshot["pantograph"]["m1"] == engine.panto.m1
+    assert snapshot["distributed_catenary"]["contact_tension"] == 20_000.0
+    assert snapshot["actuator"]["response_time"] == 40.0e-3
+    assert snapshot["controller"]["setpoint_N"] == 115.0
+    assert snapshot["solver"]["integration_step_s"] == engine.dt
+
+
 def test_records_endpoint_pages_persistent_events(tmp_path, monkeypatch):
     store = JourneyStore(tmp_path)
     journey = store.create()

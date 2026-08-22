@@ -366,6 +366,7 @@ async def ws(ws: WebSocket):
                     "schema_version": "aeropinn-journey-v1",
                 }
                 journey.record(frame)
+                journey.record_constants(engine.constants_snapshot())
                 await ws.send_json(frame)
                 await asyncio.sleep(max(0.0, target_dt - (time.perf_counter() - t0)))
         except WebSocketDisconnect:

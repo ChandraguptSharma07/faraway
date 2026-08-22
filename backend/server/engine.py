@@ -8,7 +8,7 @@ gust inputs, so their contrast is fair. Frontend controls mutate the runtime kno
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import replace
+from dataclasses import asdict, replace
 
 import numpy as np
 
@@ -478,6 +478,55 @@ class Engine:
             "sensors": {
                 "sample_count": self.sensors.sample_count,
                 "dropout_count": self.sensors.dropout_count,
+            },
+        }
+
+    def constants_snapshot(self) -> dict:
+        """Complete configuration evidence sampled separately from 1 kHz state."""
+        pinn_model = getattr(self.predictor, "model", None)
+        pinn_config = getattr(pinn_model, "cfg", None)
+        return {
+            "t_s": round(self.t, 6),
+            "pantograph": asdict(self.panto),
+            "disturbance_catenary": asdict(self.cat),
+            "distributed_catenary": {
+                **asdict(self.catenary_model.params),
+                "retained_modes": self.catenary_model.mode_count,
+                "contact_wave_speed_m_s": self.catenary_model.contact_wave_speed,
+                "messenger_wave_speed_m_s": self.catenary_model.messenger_wave_speed,
+            },
+            "actuator": asdict(self.actuator.params),
+            "sensors": asdict(self.sensor_params),
+            "controller": {
+                "setpoint_N": self.setpoint,
+                "control_period_s": self.controller.control_period,
+                "command_limit_N": self.controller.command_limit,
+                "candidate_count": len(self.controller.candidates),
+                "rollout_steps": self.controller.rollout_steps,
+                "effort_weight": self.controller.w_effort,
+                "rate_weight": self.controller.w_rate,
+                "wave_position_weight": self.controller.w_wave_position,
+                "wave_velocity_weight": self.controller.w_wave_velocity,
+                "force_bias_limit_N": self.controller.force_bias_limit,
+                "force_bias_command_gain": self.controller.force_bias_command_gain,
+            },
+            "pinn": {
+                "prediction_horizon_s": self.predictor.H,
+                "config": asdict(pinn_config) if pinn_config is not None else None,
+            },
+            "solver": {
+                "integration_step_s": self.dt,
+                "method": "FIXED_STEP_RK4_WITH_IMPLICIT_CATENARY_COUPLING",
+                "coupling_force_tolerance_N": 0.05,
+                "maximum_coupling_iterations": 8,
+            },
+            "operating_configuration": {
+                "speed_kmh": self.rp.speed_kmh,
+                "tension_factor": self.rp.tension_factor,
+                "turbulence_gain": self.rp.turbulence_gain,
+                "gust_force_N": self.rp.gust,
+                "controller_enabled": self.controller_enabled,
+                "controller_reason": self.controller_reason,
             },
         }
 
