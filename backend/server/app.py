@@ -207,3 +207,9 @@ if os.path.exists(static_path):
             return FileResponse(file_path)
         # Fallback to index.html for SPA routing
         return FileResponse(os.path.join(static_path, "index.html"))
+else:
+    from fastapi.responses import RedirectResponse
+    @app.get("/")
+    async def redirect_to_dev_server():
+        # In development, the frontend is typically hosted on port 5173
+        return {"message": "AeroPINN backend is running. Please access the frontend at http://localhost:5173 during development."}

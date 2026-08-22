@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Ensure we're in the project root
 cd "$(dirname "$0")"
@@ -13,6 +13,12 @@ fi
 
 echo "Activating virtual environment..."
 source .venv/bin/activate
+
+# Fix for NixOS: provide standard C++ and zlib libraries for pip-installed wheels
+if [ -f /etc/os-release ] && grep -qi nixos /etc/os-release; then
+    echo "NixOS detected. Setting up LD_LIBRARY_PATH for PyPI binaries..."
+    export LD_LIBRARY_PATH="$(nix-build '<nixpkgs>' -A stdenv.cc.cc.lib -A zlib --no-out-link 2>/dev/null | sed 's/$/\/lib/' | paste -sd ':' -):$LD_LIBRARY_PATH"
+fi
 
 echo "Installing backend dependencies (this is fast if already installed)..."
 pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
