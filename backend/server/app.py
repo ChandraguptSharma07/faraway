@@ -56,6 +56,15 @@ def get_servo():
     return _servo
 
 
+
+_modal_shadow_service = None
+def get_modal_shadow_service():
+    global _modal_shadow_service
+    if _modal_shadow_service is None:
+        from backend.validation.shadow import ShadowValidationService, run_modal_calibration_scenario
+        _modal_shadow_service = ShadowValidationService(runner=run_modal_calibration_scenario)
+    return _modal_shadow_service
+
 def get_shadow_service():
     """Background-only model comparison; never connected to control output."""
     global _shadow_service
@@ -74,6 +83,7 @@ def _warm_caches():
             _compute_validation()
             _compute_overlay(300.0)
             get_shadow_service().warm()
+            get_modal_shadow_service().warm()
         except Exception:
             pass
     threading.Thread(target=work, daemon=True).start()
@@ -83,6 +93,8 @@ def _warm_caches():
 def _stop_background_services():
     if _shadow_service is not None:
         _shadow_service.close()
+    if _modal_shadow_service is not None:
+        _modal_shadow_service.close()
 
 
 @app.get("/health")
@@ -171,6 +183,21 @@ def shadow_validation(
     )
     return snapshot
 
+
+
+@app.get("/api/modal-calibration")
+def modal_calibration(
+    speed_kmh: float = 250.0,
+    tension_factor: float = 1.0,
+    turbulence_gain: float = 1.0,
+    gust_active: bool = False,
+):
+    from backend.validation.shadow import classify_operating_point
+    snapshot = get_modal_shadow_service().snapshot()
+    snapshot["operating_point"] = classify_operating_point(
+        snapshot, speed_kmh, tension_factor, turbulence_gain, gust_active
+    )
+    return snapshot
 
 def _handle_input(engine: Engine, msg: dict):
     kind = msg.get("type")

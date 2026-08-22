@@ -16,6 +16,7 @@ export default function CredibilityView({ onClose }) {
   const [val, setVal] = useState(null)
   const [ov, setOv] = useState(null)
   const [shadow, setShadow] = useState(null)
+  const [modalShadow, setModalShadow] = useState(null)
   const [err, setErr] = useState(null)
 
   useEffect(() => {
@@ -25,11 +26,16 @@ export default function CredibilityView({ onClose }) {
       .then(([v, o]) => { if (active) { setVal(v); setOv(o) } })
       .catch((e) => { if (active) setErr(String(e)) })
 
-    const pollShadow = () => fetchShadowValidation()
-      .then((data) => {
+    const pollShadow = () => Promise.all([
+      fetchShadowValidation(),
+      fetch('/api/modal-calibration').then(r => r.json())
+    ])
+      .then(([data, modalData]) => {
         if (!active) return
         setShadow(data)
-        const warming = Object.values(data.scenarios).some((row) => row.status === 'WARMING_UP')
+        setModalShadow(modalData)
+        const warming = Object.values(data.scenarios).some((row) => row.status === 'WARMING_UP') ||
+                        Object.values(modalData.scenarios).some((row) => row.status === 'WARMING_UP')
         if (warming) timer = window.setTimeout(pollShadow, 1500)
       })
       .catch((e) => { if (active) setErr(String(e)) })
@@ -54,6 +60,21 @@ export default function CredibilityView({ onClose }) {
         {err && <p className="cred-err">{err} — is the backend running on :8000?</p>}
 
         <div className="cred-body">
+          
+          <section className="cred-shadow">
+            <h3>LIVE MODAL MODEL · SHADOW VALIDATION</h3>
+            <p className="shadow-note">
+              Calibrating the live 36-mode catenary vs the implicit distributed reference.
+            </p>
+            {modalShadow ? (
+              <div className="shadow-grid">
+                {['250', '300'].map((speed) => (
+                  <ShadowCard key={speed} report={modalShadow.scenarios[speed]} col1="LIVE (36-MODE)" />
+                ))}
+              </div>
+            ) : <Loading />}
+          </section>
+
           <section className="cred-shadow">
             <h3>DISTRIBUTED MODEL · SHADOW VALIDATION</h3>
             <p className="shadow-note">
@@ -158,7 +179,7 @@ function OverlayChart({ ov }) {
   )
 }
 
-function ShadowCard({ report }) {
+function ShadowCard({ report, col1 }) {
   const stateClass = report.status.toLowerCase().replace('_', '-')
   if (report.status === 'WARMING_UP' || report.status === 'ERROR') {
     return (
@@ -183,7 +204,7 @@ function ShadowCard({ report }) {
       </div>
       <div className="shadow-model-head mono" role="row">
         <span role="columnheader">METRIC</span>
-        <span role="columnheader">REDUCED</span>
+        <span role="columnheader">{col1 || 'REDUCED'}</span>
         <span role="columnheader">DISTRIBUTED</span>
         <span role="columnheader">Δ</span>
       </div>
