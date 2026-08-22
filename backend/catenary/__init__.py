@@ -7,5 +7,12 @@ and EN 50318:2018+A1:2022 validation.
 
 from .parameters import DistributedCatenaryParams
 from .solver import DistributedResult, simulate_distributed
+from .realtime import RealtimeCatenary, build_realtime_model
 
-__all__ = ["DistributedCatenaryParams", "DistributedResult", "simulate_distributed"]
+__all__ = [
+    "DistributedCatenaryParams",
+    "DistributedResult",
+    "simulate_distributed",
+    "RealtimeCatenary",
+    "build_realtime_model",
+]

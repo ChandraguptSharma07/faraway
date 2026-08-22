@@ -87,7 +87,7 @@ class SlowBenchmarkPredictor:
 def test_engine_marks_explicit_actuator_as_in_loop_and_keeps_ideal_reference():
     engine = Engine(predictor=SlowBenchmarkPredictor())
     frame = engine.frame()
-    assert frame["control_timing"]["period_ms"] == 10.0
+    assert frame["control_timing"]["period_ms"] == 18.0
     assert frame["operating_status"] == "NOMINAL"
     assert frame["control_fidelity"] == "SENSOR_EKF_ACTUATOR_IN_LOOP"
     assert frame["actuator"]["mode"] == "SIMULATED_IN_LOOP"

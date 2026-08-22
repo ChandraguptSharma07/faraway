@@ -34,6 +34,10 @@ class ActuatorAwarePINNMPC:
         control_period: float = 10.0e-3,
         w_effort: float = 2.0e-4,
         w_rate: float = 1.5e-3,
+        wire_estimate=None,
+        w_wave_position: float = 1.0,
+        w_wave_velocity: float = 2.0e-3,
+        command_limit: float | None = None,
     ):
         self.pred = predictor
         self.actuator = actuator
@@ -43,10 +47,19 @@ class ActuatorAwarePINNMPC:
         self.setpoint = setpoint
         self.rollout_steps = rollout_steps
         self.control_period = max(control_period, predictor.H)
-        limit = actuator.params.force_limit
+        limit = min(
+            actuator.params.force_limit,
+            actuator.params.force_limit if command_limit is None else command_limit,
+        )
+        if limit <= 0.0:
+            raise ValueError("command_limit must be positive")
+        self.command_limit = float(limit)
         self.candidates = np.linspace(-limit, limit, n_candidates).astype(np.float32)
         self.w_effort = w_effort
         self.w_rate = w_rate
+        self.wire_estimate = wire_estimate
+        self.w_wave_position = w_wave_position
+        self.w_wave_velocity = w_wave_velocity
         self._last_command = 0.0
         self._last_t = -1e9
         self._held = 0.0
@@ -69,19 +82,74 @@ class ActuatorAwarePINNMPC:
             axis=0,
         )
         tracking_cost = np.zeros(len(self.candidates), dtype=np.float64)
+        wave_cost = np.zeros(len(self.candidates), dtype=np.float64)
         fa = self.dist.aero_force(self.speed_ms, self.beyond)
+        if self.wire_estimate is not None:
+            count = len(self.candidates)
+            modal_q = np.repeat(
+                self.wire_estimate.displacement[None, :], count, axis=0
+            )
+            modal_v = np.repeat(
+                self.wire_estimate.velocity[None, :], count, axis=0
+            )
+            modal_a = np.repeat(
+                self.wire_estimate.acceleration[None, :], count, axis=0
+            )
+            wire_position = self.wire_estimate.position
+            ripple = np.full(count, self.wire_estimate.contact_displacement())
+            ripple_velocity = np.full(count, self.wire_estimate.contact_velocity())
+            ripple_acceleration = np.full(count, self.wire_estimate.contact_acceleration())
         for step in range(self.rollout_steps):
             future_t = t + step * self.pred.H
             wire = _wire_features(self.dist, future_t, self.speed_ms, self.beyond)
+            if self.wire_estimate is not None:
+                wire = (
+                    wire[0] + ripple,
+                    wire[1] + ripple_velocity,
+                    wire[2] + ripple_acceleration,
+                )
             states, predicted_force = self.pred.predict_state_candidates(
                 states, applied[step], fa, wire
             )
+            if self.wire_estimate is not None:
+                # The current PINN checkpoint models spring contact. Add the
+                # published distributed-model contact damping around its predicted
+                # state until the coupled checkpoint is retrained.
+                predicted_wire_velocity = wire[1] + wire[2] * self.pred.H
+                predicted_force = np.maximum(
+                    predicted_force
+                    + self.wire_estimate.model.params.contact_damping
+                    * (states[:, 1] - predicted_wire_velocity),
+                    0.0,
+                )
+                (
+                    modal_q,
+                    modal_v,
+                    modal_a,
+                    wire_position,
+                    ripple,
+                    ripple_velocity,
+                    ripple_acceleration,
+                ) = self.wire_estimate.preview_candidates(
+                    modal_q,
+                    modal_v,
+                    modal_a,
+                    predicted_force,
+                    wire_position,
+                    self.speed_ms,
+                    self.pred.H,
+                )
+                wave_cost += (
+                    self.w_wave_position * (1e3 * ripple) ** 2
+                    + self.w_wave_velocity * (1e3 * ripple_velocity) ** 2
+                )
             # Later samples matter more: early samples are mostly fixed by delay.
             weight = 0.5 + (step + 1) / self.rollout_steps
             tracking_cost += weight * (predicted_force - self.setpoint) ** 2
 
         cost = (
             tracking_cost
+            + wave_cost
             + self.w_effort * self.candidates ** 2
             + self.w_rate * (self.candidates - self._last_command) ** 2
         )

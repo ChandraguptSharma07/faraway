@@ -1,14 +1,14 @@
 import { useEffect, useRef } from 'react'
 
-// 2.5D side elevation. Two stacked lanes (PASSIVE over AeroPINN) share the same
-// wire + disturbance. The world scrolls right-to-left at a rate tied to the real
+// 2.5D side elevation. Two stacked lanes share exogenous geometry/disturbance but
+// have independent force-driven wire states. The world scrolls at the real
 // span-passing frequency (speed / span). Pantograph heads bounce per REAL backend
 // displacement; the contact node glows cyan when in contact and throws a red arc
 // spark on contact loss. Everything is read from refs inside a rAF loop.
 
 const ACCENT = '#2ee6d6'
 const ARC = '#ff3b3b'
-const PX_PER_MM = 2.4          // gross wire-undulation magnification (shared span bob)
+const PX_PER_MM = 2.4          // gross wire-undulation magnification
 const SPAN_M = 60              // physics span length
 const SPAN_PX = 240            // pixels per span on screen
 
@@ -100,15 +100,14 @@ function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced, showPhysics
     ctx.restore()
   }
 
-  const wireMm = frame ? frame.wire_mm : 0
+  const wireMm = sys?.wire_mm ?? frame?.wire_mm ?? 0
   const lost = sys ? sys.contact_lost : false
 
   // Per-system contact-force lift (the discriminating signal). Collapses to 0 on loss.
   const upliftMm = sys ? (sys.uplift_mm ?? 0) : 0
   const upliftPx = lost ? 0 : Math.min(upliftMm * UPLIFT_SCALE, UPLIFT_MAX_PX)
 
-  // Gross wire position at the train (span undulation; shared by both lanes -> both
-  // heads bob together, which is real) and the lifted contact apex the head rides.
+  // Gross position includes the lane-specific force-driven catenary ripple.
   const contactNominalY = wireBaseY - wireMm * PX_PER_MM
   const apexY = contactNominalY - upliftPx
 
@@ -350,17 +349,22 @@ function drawForceArrows(ctx, cx, headY, sys, frame, isAero, lost) {
   vArrow(ctx, cx + 42, headY, len(P), false, lost ? ARC : '#e7eef6', 'P', `${P.toFixed(0)}`)
 }
 
-// Live, judge-verifiable contact-force identity P = k_c·(z₁ − y_wire).
+// Live contact law including the coupled model's relative-velocity damping.
 // Right-aligned to end clear of the top-right PHYSICS toggle (and the train).
 function drawEquationStrip(ctx, W, y0, H, sys, frame, lost) {
   const z1 = sys.head_mm ?? 0
-  const yw = frame.wire_mm ?? 0
+  const yw = sys.wire_mm ?? frame.wire_mm ?? 0
+  const z1d = sys.head_velocity_mm_s ?? 0
+  const ywd = sys.wire_velocity_mm_s ?? 0
   const P = sys.contact_force ?? 0
   const d = z1 - yw
-  const line1 = 'P = k_c · (z₁ − y_wire)   k_c = 50 kN/m'
+  const elastic = 50 * d
+  const dampingPerMm = (frame.contact_damping_N_s_m ?? 0) / 1000
+  const damping = dampingPerMm * (z1d - ywd)
+  const line1 = 'P = max[k_c·gap + c_c·relative velocity, 0]'
   const pre = lost
-    ? `z₁ ${z1.toFixed(1)} < y_wire ${yw.toFixed(1)} mm  →  P = max(·,0) = 0  · SEPARATION`
-    : `z₁ ${z1.toFixed(1)}  y_wire ${yw.toFixed(1)} mm  →  50·(${d.toFixed(1)}) = `
+    ? `elastic ${elastic.toFixed(0)} N + damping ${damping.toFixed(0)} N → 0 N · SEPARATION`
+    : `elastic ${elastic.toFixed(0)} N + damping ${damping.toFixed(0)} N = `
   const suf = lost ? '' : `${P.toFixed(0)} N ✓`
 
   ctx.save()
@@ -416,7 +420,7 @@ function drawSpanDimension(ctx, W, H, worldX) {
 function drawModelCard(ctx, W, H, f) {
   const txt =
     `EN 50318 two-mass model  ·  k_c = 50 kN/m  ·  F₀ = ${(f.f0_N ?? 0).toFixed(0)} N  ·  ` +
-    `RK4 Δt = 1 ms  ·  identical wire + seed on both lanes  ·  horizontal 1:1 (60 m/span), vertical exaggerated`
+    `RK4 + MODAL NEWMARK Δt = 1 ms  ·  shared exogenous seed, independent coupled wires  ·  vertical exaggerated`
   ctx.save()
   ctx.font = `600 10px ${MONO}`
   ctx.textAlign = 'center'

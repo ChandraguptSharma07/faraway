@@ -38,6 +38,8 @@ def test_live_controller_uses_estimated_state_and_observer_stays_bounded():
     assert engine.controller.dist is engine.control_environment
     assert engine.controller.dist is not engine.dist
     assert engine.ideal_controller.dist is engine.dist
+    assert engine.controller.wire_estimate is engine.wire_estimate
+    assert engine.controller.wire_estimate is not engine.wire_a
     engine.step(1500)
     frame = engine.frame()
     estimate = frame["state_estimation"]

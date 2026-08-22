@@ -54,7 +54,10 @@ def deriv(
     """
     z1, z1d, z2, z2d = state
     yw = float(dist.y_wire(t, speed_ms, beyond))
-    p = _contact_force(yw, z1, panto.kc)
+    if hasattr(dist, "contact_force"):
+        p = dist.contact_force(t, speed_ms, beyond, z1, z1d, panto.kc)
+    else:
+        p = _contact_force(yw, z1, panto.kc)
     fa = dist.aero_force(speed_ms, beyond)
 
     z1dd = (-p + fa - panto.r1 * (z1d - z2d) - panto.k1 * (z1 - z2)) / panto.m1
@@ -140,11 +143,11 @@ def simulate(
         k1v, _ = deriv(state, ti, speed_ms, dist, panto, beyond, fc)
         k2v, _ = deriv(state + 0.5 * dt * k1v, ti + 0.5 * dt, speed_ms, dist, panto, beyond, fc)
         k3v, _ = deriv(state + 0.5 * dt * k2v, ti + 0.5 * dt, speed_ms, dist, panto, beyond, fc)
-        k4v, pnext = deriv(state + dt * k3v, ti + dt, speed_ms, dist, panto, beyond, fc)
+        k4v, _ = deriv(state + dt * k3v, ti + dt, speed_ms, dist, panto, beyond, fc)
         state = state + (dt / 6.0) * (k1v + 2 * k2v + 2 * k3v + k4v)
         z1[i + 1], z2[i + 1] = state[0], state[2]
-        force[i + 1] = _contact_force(
-            float(dist.y_wire(t[i + 1], speed_ms, beyond)), state[0], panto.kc
+        _, force[i + 1] = deriv(
+            state, t[i + 1], speed_ms, dist, panto, beyond, fc
         )
     step_wall_ms = 1e3 * (time.perf_counter() - t_start) / n
 

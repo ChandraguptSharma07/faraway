@@ -135,7 +135,7 @@ function makePantograph(isActive) {
     group,
     update(system, frame, showPhysics, reduced) {
       const headMm = system?.head_mm ?? 0
-      const wireMm = frame?.wire_mm ?? 0
+      const wireMm = system?.wire_mm ?? frame?.wire_mm ?? 0
       const lost = system?.contact_lost ?? false
       const frameMm = system?.frame_mm ?? 0
       const baseY = 2.0

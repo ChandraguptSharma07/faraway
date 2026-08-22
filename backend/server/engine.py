@@ -8,6 +8,7 @@ gust inputs, so their contrast is fair. Frontend controls mutate the runtime kno
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
 
 import numpy as np
 
@@ -25,6 +26,11 @@ from backend.controller.sensors import (
     SENSOR_PROVENANCE,
     MeasurementChain,
     SensorParams,
+)
+from backend.catenary.realtime import (
+    CoupledWireEnvironment,
+    RealtimeCatenary,
+    build_realtime_model,
 )
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
@@ -72,6 +78,19 @@ class Engine:
         self.control_environment = CatenaryPrior(self.cat)
         self.predictor = predictor or PINNPredictor()
         self.setpoint = 115.0
+        self.catenary_model = build_realtime_model(panto=self.panto)
+        self._base_catenary_params = self.catenary_model.params
+        self._catenary_models = {1.0: self.catenary_model}
+        self._catenary_tension_factor = 1.0
+        self.wire_p = RealtimeCatenary(self.catenary_model, dt, self.setpoint)
+        self.wire_a = RealtimeCatenary(self.catenary_model, dt, self.setpoint)
+        self.wire_ideal = RealtimeCatenary(self.catenary_model, dt, self.setpoint)
+        self.wire_estimate = RealtimeCatenary(
+            self.catenary_model, dt, self.setpoint
+        )
+        self.env_p = CoupledWireEnvironment(self.dist, self.wire_p)
+        self.env_a = CoupledWireEnvironment(self.dist, self.wire_a)
+        self.env_ideal = CoupledWireEnvironment(self.dist, self.wire_ideal)
 
         self.t = 0.0
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
@@ -104,10 +123,10 @@ class Engine:
             setpoint=self.setpoint,
             control_period=control_period,
         )
-        # This controller sees the explicit delayed actuator and a 90 ms PINN
-        # rollout. Ten milliseconds gives the datasheet 40 ms / assumed 4 ms actuator a
-        # tested real-time margin; timing misses remain visible and unidentified
-        # hardware is still a deployment blocker.
+        # This controller sees the explicit delayed actuator, a 90 ms PINN rollout,
+        # and candidate-specific modal wire motion. The 18 ms cycle remains below the
+        # published 40 ms valve response while keeping modal rollout inside deadline.
+        # Unidentified hardware and catenary parameters remain deployment blockers.
         self.controller = ActuatorAwarePINNMPC(
             self.predictor,
             self.actuator_estimate,
@@ -117,8 +136,10 @@ class Engine:
             setpoint=self.setpoint,
             n_candidates=21,
             rollout_steps=18,
-            control_period=10.0e-3,
+            control_period=18.0e-3,
             w_rate=1.5e-3,
+            wire_estimate=self.wire_estimate,
+            command_limit=25.0,
         )
 
         n = int(window_s / dt)
@@ -135,6 +156,7 @@ class Engine:
         self.f_ideal = 0.0
         self.f_actuator_estimate = 0.0
         self.latency_ms = 0.0
+        self.estimated_contact_force = self.setpoint
         self.estimator_fallback = True
         self.estimator_reason = "ESTIMATOR_STARTING"
         self.gust_decay = float(np.exp(-dt / 0.18))  # ~0.18 s gust time-constant
@@ -168,17 +190,113 @@ class Engine:
     def trigger_gust(self, magnitude: float = 70.0):
         self.rp.gust = float(magnitude)
 
-    def _rk4(self, state, speed_ms, beyond, f_control):
+    def _sync_catenary_tension(self):
+        factor = round(self.rp.tension_factor, 2)
+        if factor == self._catenary_tension_factor:
+            return
+        if factor not in self._catenary_models:
+            base = self._base_catenary_params
+            params = replace(
+                base,
+                contact_tension=base.contact_tension * factor,
+                messenger_tension=base.messenger_tension * factor,
+            )
+            self._catenary_models[factor] = build_realtime_model(
+                params=params, panto=self.panto
+            )
+        model = self._catenary_models[factor]
+        for wire in (
+            self.wire_p,
+            self.wire_a,
+            self.wire_ideal,
+            self.wire_estimate,
+        ):
+            wire.reproject_model(model)
+        self.catenary_model = model
+        self._catenary_tension_factor = factor
+
+    def _rk4(self, state, speed_ms, beyond, f_control, environment):
         dt = self.dt
-        k1, _ = deriv(state, self.t, speed_ms, self.dist, self.panto, beyond, f_control)
-        k2, _ = deriv(state + 0.5 * dt * k1, self.t + 0.5 * dt, speed_ms, self.dist, self.panto, beyond, f_control)
-        k3, _ = deriv(state + 0.5 * dt * k2, self.t + 0.5 * dt, speed_ms, self.dist, self.panto, beyond, f_control)
-        k4, _ = deriv(state + dt * k3, self.t + dt, speed_ms, self.dist, self.panto, beyond, f_control)
+        k1, _ = deriv(state, self.t, speed_ms, environment, self.panto, beyond, f_control)
+        k2, _ = deriv(state + 0.5 * dt * k1, self.t + 0.5 * dt, speed_ms, environment, self.panto, beyond, f_control)
+        k3, _ = deriv(state + 0.5 * dt * k2, self.t + 0.5 * dt, speed_ms, environment, self.panto, beyond, f_control)
+        k4, _ = deriv(state + dt * k3, self.t + dt, speed_ms, environment, self.panto, beyond, f_control)
         return state + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    def _coupled_step(
+        self,
+        state,
+        environment,
+        wire,
+        speed_ms,
+        beyond,
+        f_control,
+    ):
+        """Implicitly exchange force and displacement across the moving contact."""
+        force = wire.last_contact_force
+        old_ripple = wire.contact_displacement()
+        old_ripple_velocity = wire.contact_velocity()
+        preview = wire.preview(force, speed_ms)
+        next_state = state
+        for _ in range(8):
+            preview = wire.preview(force, speed_ms)
+            environment.ripple_override = 0.5 * (
+                old_ripple + preview.contact_displacement
+            )
+            environment.ripple_velocity_override = 0.5 * (
+                old_ripple_velocity + preview.contact_velocity
+            )
+            next_state = self._rk4(
+                state, speed_ms, beyond, f_control, environment
+            )
+            environment.ripple_override = preview.contact_displacement
+            environment.ripple_velocity_override = preview.contact_velocity
+            updated = environment.contact_force(
+                self.t + self.dt,
+                speed_ms,
+                beyond,
+                float(next_state[0]),
+                float(next_state[1]),
+                self.panto.kc,
+            )
+            if abs(updated - force) < 0.05:
+                force = updated
+                break
+            # Under-relaxation stabilizes contact opening/closing iterations.
+            force = 0.45 * updated + 0.55 * force
+        environment.ripple_override = None
+        environment.ripple_velocity_override = None
+        # Recompute the preview at the accepted force before committing the wire.
+        preview = wire.preview(force, speed_ms)
+        environment.ripple_override = 0.5 * (
+            old_ripple + preview.contact_displacement
+        )
+        environment.ripple_velocity_override = 0.5 * (
+            old_ripple_velocity + preview.contact_velocity
+        )
+        next_state = self._rk4(
+            state, speed_ms, beyond, f_control, environment
+        )
+        environment.ripple_override = preview.contact_displacement
+        environment.ripple_velocity_override = preview.contact_velocity
+        consistent_force = environment.contact_force(
+            self.t + self.dt,
+            speed_ms,
+            beyond,
+            float(next_state[0]),
+            float(next_state[1]),
+            self.panto.kc,
+        )
+        environment.ripple_override = None
+        environment.ripple_velocity_override = None
+        wire.last_coupling_residual = abs(consistent_force - force)
+        wire.commit(preview, force, speed_ms)
+        return next_state, force
 
     def step(self, n_steps: int = 1):
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
         for _ in range(n_steps):
+            self._sync_catenary_tension()
             beyond = self.rp.beyond()
             # keep controller's live view in sync
             self.controller.speed_ms = speed_ms
@@ -193,7 +311,7 @@ class Engine:
                 self.state_a,
                 self.f_control,
                 speed_ms,
-                self.dist,
+                self.env_a,
                 self.panto,
                 beyond,
             )
@@ -204,6 +322,9 @@ class Engine:
                     -self.actuator_estimate.params.force_limit,
                     self.actuator_estimate.params.force_limit,
                 ))
+            self.estimated_contact_force = self.observer.contact_force_estimate(
+                self.control_environment.aero_force(speed_ms, beyond)
+            )
 
             self.f_ideal = self.ideal_controller(
                 self.t, self.state_ideal, self.force_ideal
@@ -222,10 +343,24 @@ class Engine:
             self.f_actuator_estimate = self.actuator_estimate.step(self.f_command)
             self.latency_ms = self.controller.last_latency_ms
 
-            self.state_p = self._rk4(self.state_p, speed_ms, beyond, 0.0)
-            self.state_a = self._rk4(self.state_a, speed_ms, beyond, self.f_control)
-            self.state_ideal = self._rk4(
-                self.state_ideal, speed_ms, beyond, self.f_ideal
+            self.state_p, self.force_p = self._coupled_step(
+                self.state_p, self.env_p, self.wire_p, speed_ms, beyond, 0.0
+            )
+            self.state_a, self.force_a = self._coupled_step(
+                self.state_a,
+                self.env_a,
+                self.wire_a,
+                speed_ms,
+                beyond,
+                self.f_control,
+            )
+            self.state_ideal, self.force_ideal = self._coupled_step(
+                self.state_ideal,
+                self.env_ideal,
+                self.wire_ideal,
+                speed_ms,
+                beyond,
+                self.f_ideal,
             )
             self.observer.predict(
                 self.t,
@@ -233,14 +368,9 @@ class Engine:
                 beyond,
                 self.f_actuator_estimate,
             )
+            self.wire_estimate.step(self.estimated_contact_force, speed_ms)
             self.t += self.dt
 
-            yw = float(self.dist.y_wire(self.t, speed_ms, beyond))
-            self.force_p = max(self.panto.kc * (self.state_p[0] - yw), 0.0)
-            self.force_a = max(self.panto.kc * (self.state_a[0] - yw), 0.0)
-            self.force_ideal = max(
-                self.panto.kc * (self.state_ideal[0] - yw), 0.0
-            )
             self.fwin_p.append(self.force_p)
             self.fwin_a.append(self.force_a)
             self.fwin_ideal.append(self.force_ideal)
@@ -266,7 +396,12 @@ class Engine:
     def frame(self) -> dict:
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
         beyond = self.rp.beyond()
-        yw = float(self.dist.y_wire(self.t, speed_ms, beyond))
+        yw_p = float(self.env_p.y_wire(self.t, speed_ms, beyond))
+        yw = float(self.env_a.y_wire(self.t, speed_ms, beyond))
+        yw_ideal = float(self.env_ideal.y_wire(self.t, speed_ms, beyond))
+        ywd_p = self.env_p.wire_velocity(self.t, speed_ms, beyond)
+        ywd_a = self.env_a.wire_velocity(self.t, speed_ms, beyond)
+        ywd_ideal = self.env_ideal.wire_velocity(self.t, speed_ms, beyond)
         mp, ma = self._metrics(self.fwin_p), self._metrics(self.fwin_a)
         mi = self._metrics(self.fwin_ideal)
         timing = self.controller.timing_metrics()
@@ -293,10 +428,14 @@ class Engine:
             "deployment_status": "SIMULATION_ONLY",
             # EN 50318 model terms exposed for the world-view physics overlay
             "kc": self.panto.kc,
+            "contact_damping_N_s_m": self.catenary_model.params.contact_damping,
             "f0_N": round(self.panto.F0, 1),
             "aero_N": round(self.dist.aero_force(speed_ms, beyond), 1),
             "passive": {
                 "head_mm": round(1e3 * float(self.state_p[0]), 3),
+                "head_velocity_mm_s": round(1e3 * float(self.state_p[1]), 3),
+                "wire_mm": round(1e3 * yw_p, 3),
+                "wire_velocity_mm_s": round(1e3 * ywd_p, 3),
                 "frame_mm": round(1e3 * float(self.state_p[2]), 3),
                 "contact_force": round(self.force_p, 2),
                 "contact_lost": bool(self.force_p <= 0.0),
@@ -306,6 +445,9 @@ class Engine:
             },
             "aeropinn": {
                 "head_mm": round(1e3 * float(self.state_a[0]), 3),
+                "head_velocity_mm_s": round(1e3 * float(self.state_a[1]), 3),
+                "wire_mm": round(1e3 * yw, 3),
+                "wire_velocity_mm_s": round(1e3 * ywd_a, 3),
                 "frame_mm": round(1e3 * float(self.state_a[2]), 3),
                 "contact_force": round(self.force_a, 2),
                 "contact_lost": bool(self.force_a <= 0.0),
@@ -317,6 +459,8 @@ class Engine:
                 "f_actuator_estimate": round(self.f_actuator_estimate, 2),
             },
             "idealized_reference": {
+                "wire_mm": round(1e3 * yw_ideal, 3),
+                "wire_velocity_mm_s": round(1e3 * ywd_ideal, 3),
                 "contact_force": round(self.force_ideal, 2),
                 "std": round(mi["std"], 2),
                 "arc_pct": round(mi["arc_pct"], 2),
@@ -335,6 +479,9 @@ class Engine:
                 "controller_input": "ESTIMATED_STATE",
                 "fallback_active": self.estimator_fallback,
                 "environment_input": "DETERMINISTIC_CATENARY_PRIOR",
+                "estimated_contact_force_N": round(
+                    self.estimated_contact_force, 2
+                ),
                 "rmse_scope": "SIMULATOR_TRUTH_VALIDATION_ONLY",
                 "head_rmse_mm": round(
                     1e3 * float(np.sqrt(np.mean(head_error ** 2))), 3
@@ -350,6 +497,29 @@ class Engine:
                 "dropouts": self.sensors.dropout_count,
                 "provenance": SENSOR_PROVENANCE,
                 "baseline": SENSOR_BASELINE,
+            },
+            "catenary_dynamics": {
+                "mode": "COUPLED_MODAL_MOVING_WINDOW",
+                "coupling": "LANE_SPECIFIC_TWO_WAY_FORCE_DISPLACEMENT",
+                "contact_wave_speed_m_s": round(
+                    self.catenary_model.contact_wave_speed, 2
+                ),
+                "messenger_wave_speed_m_s": round(
+                    self.catenary_model.messenger_wave_speed, 2
+                ),
+                "reference_force_N": self.setpoint,
+                "control_authority_N": self.controller.command_limit,
+                "control_authority_status": "SIMULATION_TUNED_NOT_IDENTIFIED",
+                "passive": self.wire_p.telemetry(),
+                "aeropinn": self.wire_a.telemetry(),
+                "idealized_reference": self.wire_ideal.telemetry(),
+                "controller_estimate": self.wire_estimate.telemetry(),
+                "limitations": [
+                    "taut-droppers linearized in live model",
+                    "moving-window modal projection",
+                    "vertical dynamics only",
+                    "simulation parameters not route-identified",
+                ],
             },
             "actuator": {
                 "mode": "SIMULATED_IN_LOOP",

@@ -5,6 +5,7 @@ import numpy as np
 from backend.catenary.model import assemble_system, interpolation_weights, structural_modes
 from backend.catenary.parameters import DistributedCatenaryParams, PARAMETER_PROVENANCE
 from backend.catenary.solver import simulate_distributed
+from backend.catenary.realtime import RealtimeCatenary, build_realtime_model
 from backend.catenary.validation import compare_with_legacy, theoretical_wave_speeds
 
 
@@ -90,3 +91,62 @@ def test_legacy_comparison_reports_both_models_without_equating_them():
     values = tuple(comparison.__dict__.values())
     assert np.all(np.isfinite(values))
     assert comparison.legacy_mean_force != comparison.distributed_mean_force
+
+
+def test_realtime_lanes_develop_force_dependent_distinct_ripples():
+    model = build_realtime_model(params=replace(
+        small_params(), n_spans=8, elements_per_span=6
+    ), mode_count=24)
+    passive = RealtimeCatenary(model, 1.0e-3)
+    active = RealtimeCatenary(model, 1.0e-3)
+    for _ in range(800):
+        passive.step(150.0, 250.0 / 3.6)
+        active.step(90.0, 250.0 / 3.6)
+    assert np.all(np.isfinite(passive.displacement))
+    assert np.all(np.isfinite(active.displacement))
+    assert not np.allclose(passive.displacement, active.displacement)
+    assert passive.contact_displacement() != active.contact_displacement()
+
+
+def test_realtime_modal_preview_does_not_mutate_live_wire():
+    model = build_realtime_model(params=replace(
+        small_params(), n_spans=8, elements_per_span=6
+    ), mode_count=24)
+    wire = RealtimeCatenary(model, 1.0e-3)
+    before = wire.displacement.copy()
+    preview = wire.preview(150.0, 250.0 / 3.6)
+    assert np.array_equal(wire.displacement, before)
+    assert np.any(preview.displacement != before)
+
+
+def test_36_mode_live_response_is_close_to_48_mode_reference():
+    params = replace(small_params(), n_spans=8, elements_per_span=6)
+    coarse = RealtimeCatenary(
+        build_realtime_model(params=params, mode_count=36), 1.0e-3
+    )
+    reference = RealtimeCatenary(
+        build_realtime_model(params=params, mode_count=48), 1.0e-3
+    )
+    coarse_trace, reference_trace = [], []
+    for i in range(2_000):
+        force = 115.0 + 20.0 * np.sin(2.0 * np.pi * 5.0 * i * 1.0e-3)
+        coarse_trace.append(coarse.step(force, 250.0 / 3.6))
+        reference_trace.append(reference.step(force, 250.0 / 3.6))
+    difference = np.asarray(coarse_trace[500:]) - np.asarray(reference_trace[500:])
+    assert 1e3 * np.sqrt(np.mean(difference ** 2)) < 0.25
+
+
+def test_live_tension_change_preserves_state_and_lowers_wave_speed():
+    from backend.server.engine import Engine
+
+    engine = Engine()
+    engine.step(50)
+    physical_before = engine.wire_p.model.modes @ engine.wire_p.displacement
+    nominal_speed = engine.catenary_model.contact_wave_speed
+    engine.set_tension(0.7)
+    engine._sync_catenary_tension()
+    physical_after = engine.wire_p.model.modes @ engine.wire_p.displacement
+    assert engine.catenary_model.contact_wave_speed < nominal_speed
+    # Modal truncation makes reprojection approximate, but it must not reset motion.
+    assert np.linalg.norm(physical_after) > 0.0
+    assert np.linalg.norm(physical_after - physical_before) < 0.01
