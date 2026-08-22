@@ -123,3 +123,24 @@ def test_server_exposes_nonblocking_shadow_snapshot(monkeypatch):
 
     monkeypatch.setattr(server, "_shadow_service", StubService())
     assert server.shadow_validation()["mode"] == "SHADOW_ONLY"
+
+
+def test_modal_sensitivity_matches_distributed_physics():
+    from backend.validation.shadow import run_modal_sensitivity, ShadowConfig
+    report = run_modal_sensitivity(
+        250,
+        config=ShadowConfig(
+            duration=0.04,
+            legacy_duration=0.1,
+            n_spans=2,
+            fine_elements_per_span=4,
+            coarse_elements_per_span=4,
+            fine_dt=1.0e-3,
+            coarse_dt=2.0e-3,
+            record_stride=2,
+        ),
+    )
+    assert "distributed" in report
+    assert "modes" in report
+    assert "24" in report["modes"]
+    assert "36" in report["modes"]

@@ -22,7 +22,100 @@ import numpy as np
 
 from backend.catenary.parameters import DistributedCatenaryParams, PARAMETER_PROVENANCE
 from backend.catenary.solver import DistributedResult, simulate_distributed
-from backend.sim.parameters import CatenaryParams, kmh_to_ms
+from backend.sim.parameters import BeyondEnvelope, CatenaryParams, PantographParams, kmh_to_ms
+
+from backend.catenary.realtime import build_realtime_model, RealtimeCatenary, CoupledWireEnvironment
+from backend.sim.solver import static_equilibrium, deriv
+
+def simulate_live(
+    speed_ms: float,
+    duration: float,
+    dt: float = 1.0e-3,
+    *,
+    cat: CatenaryParams | None = None,
+    panto: PantographParams | None = None,
+    beyond: BeyondEnvelope | None = None,
+    mode_count: int = 36,
+    n_spans: int = 8,
+) -> dict:
+    from backend.sim.disturbance import Disturbance
+    
+    cat = cat or CatenaryParams()
+    panto = panto or PantographParams()
+    beyond = beyond or BeyondEnvelope()
+    dist = Disturbance(cat, seed=12345)
+    
+    params = replace(DistributedCatenaryParams(), n_spans=n_spans)
+    model = build_realtime_model(params=params, panto=panto, mode_count=mode_count)
+    wire = RealtimeCatenary(model, dt, reference_force=115.0)
+    env = CoupledWireEnvironment(dist, wire)
+    
+    state = static_equilibrium(speed_ms, dist, panto, beyond)
+    
+    n = int(round(duration / dt))
+    t_arr = np.arange(n + 1) * dt
+    force_arr = np.empty(n + 1)
+    
+    fc = 0.0
+    _, p0 = deriv(state, 0.0, speed_ms, env, panto, beyond, fc)
+    force_arr[0] = p0
+    
+    def _rk4(st, t_val, env_obj):
+        k1, _ = deriv(st, t_val, speed_ms, env_obj, panto, beyond, 0.0)
+        k2, _ = deriv(st + 0.5 * dt * k1, t_val + 0.5 * dt, speed_ms, env_obj, panto, beyond, 0.0)
+        k3, _ = deriv(st + 0.5 * dt * k2, t_val + 0.5 * dt, speed_ms, env_obj, panto, beyond, 0.0)
+        k4, _ = deriv(st + dt * k3, t_val + dt, speed_ms, env_obj, panto, beyond, 0.0)
+        return st + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+
+    for i in range(n):
+        ti = t_arr[i]
+        force = wire.last_contact_force
+        old_ripple = wire.contact_displacement()
+        old_ripple_velocity = wire.contact_velocity()
+        
+        next_state = state
+        for _ in range(8):
+            preview = wire.preview(force, speed_ms)
+            env.ripple_override = 0.5 * (old_ripple + preview.contact_displacement)
+            env.ripple_velocity_override = 0.5 * (old_ripple_velocity + preview.contact_velocity)
+            next_state = _rk4(state, ti, env)
+            env.ripple_override = preview.contact_displacement
+            env.ripple_velocity_override = preview.contact_velocity
+            updated = env.contact_force(ti + dt, speed_ms, beyond, float(next_state[0]), float(next_state[1]), panto.kc)
+            if abs(updated - force) < 0.05:
+                force = updated
+                break
+            force = 0.45 * updated + 0.55 * force
+            
+        env.ripple_override = None
+        env.ripple_velocity_override = None
+        preview = wire.preview(force, speed_ms)
+        env.ripple_override = 0.5 * (old_ripple + preview.contact_displacement)
+        env.ripple_velocity_override = 0.5 * (old_ripple_velocity + preview.contact_velocity)
+        next_state = _rk4(state, ti, env)
+        env.ripple_override = preview.contact_displacement
+        env.ripple_velocity_override = preview.contact_velocity
+        consistent_force = env.contact_force(ti + dt, speed_ms, beyond, float(next_state[0]), float(next_state[1]), panto.kc)
+        env.ripple_override = None
+        env.ripple_velocity_override = None
+        
+        wire.last_coupling_residual = abs(consistent_force - force)
+        wire.commit(preview, force, speed_ms)
+        state = next_state
+        force_arr[i + 1] = force
+
+    steady = t_arr >= 0.5 * duration
+    steady_force = force_arr[steady]
+    mean = float(np.mean(steady_force))
+    std = float(np.std(steady_force))
+    return {
+        "mean_N": mean,
+        "std_N": std,
+        "loss_of_contact_pct": 100.0 * float(np.mean(steady_force <= 0.0)),
+        "max_uplift_mm": 1e3 * float(np.max(steady_force)) / cat.s_wire_eff,
+        "wave_speed": wire.model.contact_wave_speed
+    }
+
 from backend.sim.solver import metrics as legacy_metrics
 from backend.sim.solver import simulate as simulate_legacy
 from backend.sim.validate import EN50318, _in_range
@@ -51,6 +144,34 @@ class ShadowConfig:
     coarse_dt: float = 1.0e-3
     record_stride: int = 10
 
+
+
+def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) -> dict:
+    speed_ms = kmh_to_ms(speed_kmh)
+    config = config or ShadowConfig()
+    dist_params = replace(DistributedCatenaryParams(), n_spans=config.n_spans, elements_per_span=config.fine_elements_per_span)
+    cat = replace(CatenaryParams(), turb_std=0.0)
+    aerodynamic_force = cat.c_aero * speed_ms * speed_ms
+    
+    fine_result = simulate_distributed(
+        speed_ms,
+        config.duration,
+        config.fine_dt,
+        params=dist_params,
+        head_force_fn=lambda _t, _q, _p: aerodynamic_force,
+        record_stride=config.record_stride,
+    )
+    distributed = _distributed_metrics(fine_result, config.duration)
+    
+    live_runs = {}
+    for modes in [24, 36, 48, 60]:
+        live_res = simulate_live(speed_ms, config.duration, dt=config.coarse_dt, cat=cat, mode_count=modes, n_spans=config.n_spans)
+        live_runs[str(modes)] = live_res
+        
+    return {
+        "distributed": distributed,
+        "modes": live_runs
+    }
 
 def _source_commit() -> str:
     for name in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_COMMIT"):
