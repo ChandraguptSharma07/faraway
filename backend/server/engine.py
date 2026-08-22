@@ -17,7 +17,15 @@ from backend.controller.actuator import (
     ForceActuator,
 )
 from backend.controller.actuator_mpc import ActuatorAwarePINNMPC
+from backend.controller.environment import CatenaryPrior
 from backend.controller.mpc import PINNMPCController
+from backend.controller.observer import PantographEKF
+from backend.controller.sensors import (
+    SENSOR_BASELINE,
+    SENSOR_PROVENANCE,
+    MeasurementChain,
+    SensorParams,
+)
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
 from backend.sim.disturbance import Disturbance
@@ -48,12 +56,20 @@ class RuntimeParams:
 
 
 class Engine:
-    def __init__(self, dt: float = 1.0e-3, window_s: float = 3.0, seed: int = 2024, predictor=None):
+    def __init__(
+        self,
+        dt: float = 1.0e-3,
+        window_s: float = 3.0,
+        seed: int = 2024,
+        predictor=None,
+        sensor_params: SensorParams | None = None,
+    ):
         self.dt = dt
         self.cat = CatenaryParams()
         self.panto = PantographParams()
         self.rp = RuntimeParams()
         self.dist = Disturbance(self.cat, seed=seed)
+        self.control_environment = CatenaryPrior(self.cat)
         self.predictor = predictor or PINNPredictor()
         self.setpoint = 115.0
 
@@ -63,6 +79,18 @@ class Engine:
         self.state_a = self._equilibrium(speed_ms)
         self.state_ideal = self._equilibrium(speed_ms)
         self.actuator = ForceActuator(dt, ActuatorParams())
+        # Separate plant and controller-side actuator objects. Pressure sensing may
+        # correct the latter; the controller cannot inspect the simulated plant.
+        self.actuator_estimate = ForceActuator(dt, self.actuator.params)
+        self.sensor_params = sensor_params or SensorParams()
+        self.sensors = MeasurementChain(self.sensor_params, seed=seed + 101)
+        self.observer = PantographEKF(
+            self._equilibrium(speed_ms),
+            dt,
+            self.control_environment,
+            self.panto,
+            self.sensor_params,
+        )
         startup_timing = self.predictor.benchmark_latency(
             n_candidates=21, iters=100, deadline_ms=4.0
         )
@@ -82,8 +110,8 @@ class Engine:
         # hardware is still a deployment blocker.
         self.controller = ActuatorAwarePINNMPC(
             self.predictor,
-            self.actuator,
-            self.dist,
+            self.actuator_estimate,
+            self.control_environment,
             speed_ms,
             self.rp.beyond(),
             setpoint=self.setpoint,
@@ -97,6 +125,8 @@ class Engine:
         self.fwin_p: deque = deque(maxlen=n)
         self.fwin_a: deque = deque(maxlen=n)
         self.fwin_ideal: deque = deque(maxlen=n)
+        self.observer_error_head: deque = deque(maxlen=n)
+        self.observer_error_frame: deque = deque(maxlen=n)
         self.force_p = 0.0
         self.force_a = 0.0
         self.force_ideal = 0.0
@@ -105,6 +135,8 @@ class Engine:
         self.f_ideal = 0.0
         self.f_actuator_estimate = 0.0
         self.latency_ms = 0.0
+        self.estimator_fallback = True
+        self.estimator_reason = "ESTIMATOR_STARTING"
         self.gust_decay = float(np.exp(-dt / 0.18))  # ~0.18 s gust time-constant
 
         # Settle the start-up transient before streaming. The collector-head mode is
@@ -114,6 +146,8 @@ class Engine:
         self.fwin_p.clear()
         self.fwin_a.clear()
         self.fwin_ideal.clear()
+        self.observer_error_head.clear()
+        self.observer_error_frame.clear()
         self.controller.reset_timing()
         self.ideal_controller.reset_timing()
 
@@ -152,18 +186,52 @@ class Engine:
             self.ideal_controller.speed_ms = speed_ms
             self.ideal_controller.beyond = beyond
 
+            # Truth ends here. Only sampled, noisy, quantised and delayed packets
+            # cross into the observer/controller side of the boundary.
+            self.sensors.sample(
+                self.t,
+                self.state_a,
+                self.f_control,
+                speed_ms,
+                self.dist,
+                self.panto,
+                beyond,
+            )
+            for packet in self.sensors.deliver(self.t):
+                self.observer.update(packet, speed_ms, beyond)
+                self.actuator_estimate.force = float(np.clip(
+                    packet.actuator_force,
+                    -self.actuator_estimate.params.force_limit,
+                    self.actuator_estimate.params.force_limit,
+                ))
+
             self.f_ideal = self.ideal_controller(
                 self.t, self.state_ideal, self.force_ideal
             )
-            self.f_command = self.controller(self.t, self.state_a, self.force_a)
+            estimator_healthy, self.estimator_reason = self.observer.health(self.t)
+            self.estimator_fallback = not estimator_healthy
+            if estimator_healthy:
+                self.f_command = self.controller(
+                    self.t, self.observer.state.copy(), 0.0
+                )
+            else:
+                # Removing active force is the fail-safe behavior of this simulation;
+                # real hardware still needs a safety case and independent interlock.
+                self.f_command = 0.0
             self.f_control = self.actuator.step(self.f_command)
-            self.f_actuator_estimate = self.f_control
+            self.f_actuator_estimate = self.actuator_estimate.step(self.f_command)
             self.latency_ms = self.controller.last_latency_ms
 
             self.state_p = self._rk4(self.state_p, speed_ms, beyond, 0.0)
             self.state_a = self._rk4(self.state_a, speed_ms, beyond, self.f_control)
             self.state_ideal = self._rk4(
                 self.state_ideal, speed_ms, beyond, self.f_ideal
+            )
+            self.observer.predict(
+                self.t,
+                speed_ms,
+                beyond,
+                self.f_actuator_estimate,
             )
             self.t += self.dt
 
@@ -176,6 +244,12 @@ class Engine:
             self.fwin_p.append(self.force_p)
             self.fwin_a.append(self.force_a)
             self.fwin_ideal.append(self.force_ideal)
+            self.observer_error_head.append(
+                float(self.observer.state[0] - self.state_a[0])
+            )
+            self.observer_error_frame.append(
+                float(self.observer.state[2] - self.state_a[2])
+            )
 
             # decay gust toward 0
             if self.rp.gust != 0.0:
@@ -196,6 +270,9 @@ class Engine:
         mp, ma = self._metrics(self.fwin_p), self._metrics(self.fwin_a)
         mi = self._metrics(self.fwin_ideal)
         timing = self.controller.timing_metrics()
+        observer = self.observer.telemetry(self.t)
+        head_error = np.fromiter(self.observer_error_head, dtype=float)
+        frame_error = np.fromiter(self.observer_error_frame, dtype=float)
         s_wire = self.cat.s_wire_eff
         return {
             "t": round(self.t, 4),
@@ -212,7 +289,7 @@ class Engine:
                 or self.rp.turbulence_gain > 1
                 else "NOMINAL"
             ),
-            "control_fidelity": "SIMULATED_ACTUATOR_IN_LOOP",
+            "control_fidelity": "SENSOR_EKF_ACTUATOR_IN_LOOP",
             "deployment_status": "SIMULATION_ONLY",
             # EN 50318 model terms exposed for the world-view physics overlay
             "kc": self.panto.kc,
@@ -252,6 +329,27 @@ class Engine:
                 "latency_p99_ms": round(timing["latency_p99_ms"], 3),
                 "deadline_miss_pct": round(timing["deadline_miss_pct"], 2),
                 "samples": timing["samples"],
+            },
+            "state_estimation": {
+                **observer,
+                "controller_input": "ESTIMATED_STATE",
+                "fallback_active": self.estimator_fallback,
+                "environment_input": "DETERMINISTIC_CATENARY_PRIOR",
+                "rmse_scope": "SIMULATOR_TRUTH_VALIDATION_ONLY",
+                "head_rmse_mm": round(
+                    1e3 * float(np.sqrt(np.mean(head_error ** 2))), 3
+                ) if len(head_error) else 0.0,
+                "frame_rmse_mm": round(
+                    1e3 * float(np.sqrt(np.mean(frame_error ** 2))), 3
+                ) if len(frame_error) else 0.0,
+            },
+            "sensors": {
+                "sample_rate_hz": round(1.0 / self.sensor_params.sample_period, 1),
+                "latency_ms": round(1e3 * self.sensor_params.delivery_latency, 2),
+                "samples": self.sensors.sample_count,
+                "dropouts": self.sensors.dropout_count,
+                "provenance": SENSOR_PROVENANCE,
+                "baseline": SENSOR_BASELINE,
             },
             "actuator": {
                 "mode": "SIMULATED_IN_LOOP",

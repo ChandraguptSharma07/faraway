@@ -89,7 +89,7 @@ def test_engine_marks_explicit_actuator_as_in_loop_and_keeps_ideal_reference():
     frame = engine.frame()
     assert frame["control_timing"]["period_ms"] == 10.0
     assert frame["operating_status"] == "NOMINAL"
-    assert frame["control_fidelity"] == "SIMULATED_ACTUATOR_IN_LOOP"
+    assert frame["control_fidelity"] == "SENSOR_EKF_ACTUATOR_IN_LOOP"
     assert frame["actuator"]["mode"] == "SIMULATED_IN_LOOP"
     assert frame["deployment_status"] == "SIMULATION_ONLY"
     assert frame["actuator"]["parameter_status"] == "DATASHEET_BASELINE_NOT_IDENTIFIED"

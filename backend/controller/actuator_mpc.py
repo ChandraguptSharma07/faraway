@@ -17,7 +17,6 @@ import numpy as np
 from backend.controller.actuator import ForceActuator
 from backend.pinn.data import _wire_features
 from backend.pinn.predict import PINNPredictor
-from backend.sim.disturbance import Disturbance
 from backend.sim.parameters import BeyondEnvelope
 
 
@@ -26,7 +25,7 @@ class ActuatorAwarePINNMPC:
         self,
         predictor: PINNPredictor,
         actuator: ForceActuator,
-        dist: Disturbance,
+        dist,
         speed_ms: float,
         beyond: BeyondEnvelope,
         setpoint: float = 115.0,

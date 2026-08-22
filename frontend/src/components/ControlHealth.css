@@ -16,9 +16,11 @@
 
 .actuator-health b { color: var(--text-dim); font-weight: 600; }
 .actuator-health .idealized { margin-right: auto; color: var(--warn); letter-spacing: 0.06em; }
+.actuator-health.fallback,
+.actuator-health.fallback b { color: var(--arc); }
 
 @media (max-width: 620px) {
   .actuator-health { gap: 8px; }
   .actuator-health .idealized { font-size: 0; }
-  .actuator-health .idealized::after { content: '* IDEAL'; font-size: 8px; }
+  .actuator-health .idealized::after { content: '* ESTIMATED STATE'; font-size: 8px; }
 }

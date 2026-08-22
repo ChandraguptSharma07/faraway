@@ -9,6 +9,7 @@ export default function Readouts({ frameRef }) {
   const a = f && f.aeropinn
   const beyond = f && (f.speed_kmh > 300 || f.tension_factor < 1 || f.turbulence_gain > 1)
   const timing = f && f.control_timing
+  const estimate = f && f.state_estimation
 
   return (
     <div className="readouts">
@@ -30,8 +31,10 @@ export default function Readouts({ frameRef }) {
         <CompareRow label="FORCE σ" pv={p ? p.std.toFixed(1) : '—'} av={a ? a.std.toFixed(1) : '—'} unit="N" />
         <CompareRow label="ARC TIME" pv={p ? p.arc_pct.toFixed(1) : '—'} av={a ? a.arc_pct.toFixed(1) : '—'} unit="%"
                     pDanger={p && p.arc_pct > 0.05} aDanger={a && a.arc_pct > 0.05} />
-        <div className="actuator-health mono" title="Command is passed through the displayed simulated actuator delay, bandwidth, rate and force limits">
-          <span className="idealized">* SIMULATED ACTUATOR-IN-LOOP</span>
+        <div className={`actuator-health mono ${estimate?.fallback_active ? 'fallback' : ''}`}
+             title="Control uses delayed noisy sensors, an EKF state estimate, and the displayed simulated actuator">
+          <span className="idealized">* SENSOR + EKF + ACTUATOR SIMULATION</span>
+          <span>EKF <b>{estimate ? estimate.status : '—'}{Number.isFinite(estimate?.packet_age_ms) ? ` · ${estimate.packet_age_ms.toFixed(0)} ms` : ''}</b></span>
           <span>CMD <b>{Number.isFinite(a?.f_command) ? a.f_command.toFixed(0) : '—'} N</b></span>
           <span>APPLIED <b>{Number.isFinite(a?.f_actuator_estimate) ? a.f_actuator_estimate.toFixed(0) : '—'} N</b></span>
         </div>
