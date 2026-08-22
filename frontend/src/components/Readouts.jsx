@@ -20,23 +20,13 @@ export default function Readouts({ frameRef }) {
               text warn={beyond} ok={!beyond} />
       </div>
 
-      <div className="scoreboard">
-        <div className="sb-head"><span>HEADLINE METRICS</span></div>
-        <div className="sb-grid">
-          <div className="sb-corner" />
-          <div className="sb-col-h passive-h">PASSIVE</div>
-          <div className="sb-col-h aero-h">AeroPINN</div>
-
-          <div className="sb-row-h">FORCE σ</div>
-          <Cell v={p ? p.std.toFixed(1) : '—'} unit="N" kind="passive" />
-          <Cell v={a ? a.std.toFixed(1) : '—'} unit="N" kind="aero" />
-
-          <div className="sb-row-h">ARC TIME</div>
-          <Cell v={p ? p.arc_pct.toFixed(1) : '—'} unit="%" kind="passive"
-                danger={p && p.arc_pct > 0.05} />
-          <Cell v={a ? a.arc_pct.toFixed(1) : '—'} unit="%" kind="aero"
-                danger={a && a.arc_pct > 0.05} />
+      <div className="compare-card">
+        <div className="compare-head">
+          <span>HEADLINE</span><span className="passive-h">PASSIVE</span><span className="aero-h">AeroPINN</span>
         </div>
+        <CompareRow label="FORCE σ" pv={p ? p.std.toFixed(1) : '—'} av={a ? a.std.toFixed(1) : '—'} unit="N" />
+        <CompareRow label="ARC TIME" pv={p ? p.arc_pct.toFixed(1) : '—'} av={a ? a.arc_pct.toFixed(1) : '—'} unit="%"
+                    pDanger={p && p.arc_pct > 0.05} aDanger={a && a.arc_pct > 0.05} />
       </div>
     </div>
   )
@@ -57,11 +47,12 @@ function Stat({ label, value, unit, accent, warn, ok, text }) {
   )
 }
 
-function Cell({ v, unit, kind, danger }) {
+function CompareRow({ label, pv, av, unit, pDanger, aDanger }) {
   return (
-    <div className={`sb-cell ${kind} ${danger ? 'danger' : ''}`}>
-      <span className="mono sb-val">{v}</span>
-      <span className="sb-unit">{unit}</span>
+    <div className="compare-row">
+      <span className="compare-label">{label}</span>
+      <span className={`compare-value passive ${pDanger ? 'danger' : ''}`}><b className="mono">{pv}</b> {unit}</span>
+      <span className={`compare-value aero ${aDanger ? 'danger' : ''}`}><b className="mono">{av}</b> {unit}</span>
     </div>
   )
 }

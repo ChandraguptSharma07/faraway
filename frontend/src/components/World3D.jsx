@@ -297,8 +297,9 @@ function makeLane(source, laneZ, isActive) {
   return { root, pantograph }
 }
 
-export default function World3D({ frameRef, prefersReducedMotion, showPhysics = true }) {
+export default function World3D({ frameRef, prefersReducedMotion, showPhysics = true, cameraReset = 0 }) {
   const mountRef = useRef(null)
+  const controlsRef = useRef(null)
   const reducedRef = useRef(prefersReducedMotion)
   const physicsRef = useRef(showPhysics)
   const frame = useThrottledFrame(frameRef, 10)
@@ -312,6 +313,10 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
   useEffect(() => {
     physicsRef.current = showPhysics
   }, [showPhysics])
+
+  useEffect(() => {
+    if (cameraReset > 0) controlsRef.current?.reset()
+  }, [cameraReset])
 
   useEffect(() => {
     const mount = mountRef.current
@@ -349,6 +354,7 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
     controls.rotateSpeed = 0.55
     controls.update()
     controls.saveState()
+    controlsRef.current = controls
 
     const resetCamera = () => controls.reset()
     renderer.domElement.addEventListener('dblclick', resetCamera)
@@ -432,6 +438,7 @@ export default function World3D({ frameRef, prefersReducedMotion, showPhysics = 
       observer.disconnect()
       renderer.domElement.removeEventListener('dblclick', resetCamera)
       controls.dispose()
+      controlsRef.current = null
       scene.traverse((object) => {
         if (object.geometry) object.geometry.dispose()
         if (object.material) {

@@ -12,6 +12,7 @@ export default function App() {
   const [showCred, setShowCred] = useState(false)
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [showPhysics, setShowPhysics] = useState(true)
+  const [cameraReset, setCameraReset] = useState(0)
 
   useEffect(() => {
     const m = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -39,14 +40,24 @@ export default function App() {
       </header>
 
       <section className="world-zone">
-        <World3D frameRef={frameRef} prefersReducedMotion={reduced} showPhysics={showPhysics} />
-        <button
-          className={`physics-toggle ${showPhysics ? 'on' : ''}`}
-          onClick={() => setShowPhysics((v) => !v)}
-          title="Overlay the equations, forces and dimensions on the world view"
-        >
-          PHYSICS {showPhysics ? 'ON' : 'OFF'}
-        </button>
+        <World3D
+          frameRef={frameRef}
+          prefersReducedMotion={reduced}
+          showPhysics={showPhysics}
+          cameraReset={cameraReset}
+        />
+        <div className="view-tools">
+          <button
+            className={`physics-toggle ${showPhysics ? 'on' : ''}`}
+            onClick={() => setShowPhysics((v) => !v)}
+            title="Toggle live force vectors"
+          >
+            FORCES {showPhysics ? 'ON' : 'OFF'}
+          </button>
+          <button className="camera-reset" onClick={() => setCameraReset((v) => v + 1)}>
+            RESET VIEW
+          </button>
+        </div>
         {!connected && (
           <div className="world-offline mono">
             connecting to backend on :8000…
@@ -55,12 +66,12 @@ export default function App() {
       </section>
 
       <section className="instrument-zone">
-        <div className="panel trace-panel">
-          <div className="panel-title">CONTACT FORCE · LIVE</div>
-          <ForceTrace historyRef={historyRef} />
-        </div>
-        <div className="panel readout-panel">
+        <div className="kpi-strip">
           <Readouts frameRef={frameRef} />
+        </div>
+        <div className="panel trace-panel">
+          <div className="panel-title">CONTACT FORCE · LIVE COMPARISON</div>
+          <ForceTrace historyRef={historyRef} frameRef={frameRef} />
         </div>
         <div className="panel control-panel">
           <div className="panel-title">OPERATOR CONSOLE</div>

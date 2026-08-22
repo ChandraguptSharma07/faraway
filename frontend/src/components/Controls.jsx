@@ -41,19 +41,21 @@ export default function Controls({ send }) {
     <div className="controls">
       <div className="ctrl-presets">
         <button className="preset" onClick={() => applyPreset({ speed: 250, tension: 1.0, turb: 1.0 })}>
-          ◇ EN 50318 VALIDATED
+          ◇ NOMINAL
         </button>
         <button className="preset danger" onClick={() => applyPreset({ speed: 350, tension: 0.5, turb: 3.5 })}>
-          ▲ BEYOND ENVELOPE
+          ▲ STRESS TEST
         </button>
       </div>
 
-      <Slider label="SPEED" value={speed} min={80} max={400} step={1} unit="km/h"
-              onChange={onSpeed} />
-      <Slider label="CONTACT-WIRE TENSION" value={tension} min={0.3} max={1.0} step={0.01}
-              unit="" fmt={(v) => (v * 100).toFixed(0) + '%'} invert onChange={onTension} />
-      <Slider label="TURBULENCE" value={turb} min={0.5} max={4.0} step={0.05}
-              unit="×" onChange={onTurb} />
+      <div className="ctrl-sliders">
+        <Slider label="SPEED" value={speed} min={80} max={400} step={1} unit="km/h"
+                onChange={onSpeed} />
+        <Slider label="WIRE TENSION" value={tension} min={0.3} max={1.0} step={0.01}
+                unit="" fmt={(v) => (v * 100).toFixed(0) + '%'} onChange={onTension} />
+        <Slider label="TURBULENCE" value={turb} min={0.5} max={4.0} step={0.05}
+                unit="×" onChange={onTurb} />
+      </div>
 
       <button className={`gust-btn ${gustFlash ? 'flash' : ''}`} onClick={gust}>
         GUST

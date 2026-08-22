@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
+import { useThrottledFrame } from '../hooks/useTelemetry'
 
 const ACCENT = '#2ee6d6'
 const PASSIVE = '#c9a24a'  // amber-grey: the jagged baseline (not red — red is fault-only)
@@ -9,9 +10,10 @@ const SETPOINT = 115
 // Live contact-force trace: passive (jagged, spiking through the zero/arc threshold)
 // vs AeroPINN (near-flat ribbon at the setpoint). Updated imperatively from the
 // telemetry ring buffer in a rAF loop — no React re-render per sample.
-export default function ForceTrace({ historyRef }) {
+export default function ForceTrace({ historyRef, frameRef }) {
   const wrapRef = useRef(null)
   const uRef = useRef(null)
+  const frame = useThrottledFrame(frameRef, 8)
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -86,5 +88,14 @@ export default function ForceTrace({ historyRef }) {
     return () => { cancelAnimationFrame(raf); ro.disconnect(); u.destroy() }
   }, [historyRef])
 
-  return <div className="trace-wrap" ref={wrapRef} />
+  return (
+    <div className="trace-shell">
+      <div className="trace-legend mono">
+        <span className="legend-item passive"><i />PASSIVE <b>{frame ? frame.passive.contact_force.toFixed(0) : '—'} N</b></span>
+        <span className="legend-item aero"><i />AeroPINN <b>{frame ? frame.aeropinn.contact_force.toFixed(0) : '—'} N</b></span>
+        <span className="legend-setpoint">SETPOINT {frame ? frame.setpoint_N.toFixed(0) : '115'} N</span>
+      </div>
+      <div className="trace-wrap" ref={wrapRef} />
+    </div>
+  )
 }
