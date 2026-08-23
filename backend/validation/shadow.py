@@ -38,6 +38,23 @@ def simulate_live(
     mode_count: int = 36,
     n_spans: int = 8,
 ) -> dict:
+    """Simulates a live pantograph-catenary interaction.
+
+    Args:
+        speed_ms: The train speed in meters per second.
+        duration: The duration of the simulation in seconds.
+        dt: The integration timestep in seconds.
+        cat: Catenary parameters. Defaults to None.
+        panto: Pantograph parameters. Defaults to None.
+        beyond: Beyond envelope parameters. Defaults to None.
+        mode_count: The number of modes to use in the real-time model. Defaults to 36.
+        n_spans: The number of spans in the catenary model. Defaults to 8.
+
+    Returns:
+        dict: A dictionary containing simulation metrics including mean force,
+            standard deviation of force, loss of contact percentage, maximum
+            uplift in mm, and contact wave speed.
+    """
     from backend.sim.disturbance import Disturbance
     
     cat = cat or CatenaryParams()
@@ -61,6 +78,16 @@ def simulate_live(
     force_arr[0] = p0
     
     def _rk4(st, t_val, env_obj):
+        """Performs one step of Runge-Kutta 4th order integration.
+
+        Args:
+            st: The current state vector.
+            t_val: The current time value.
+            env_obj: The environment object handling force coupling.
+
+        Returns:
+            The integrated state vector for the next timestep.
+        """
         k1, _ = deriv(st, t_val, speed_ms, env_obj, panto, beyond, 0.0)
         k2, _ = deriv(st + 0.5 * dt * k1, t_val + 0.5 * dt, speed_ms, env_obj, panto, beyond, 0.0)
         k3, _ = deriv(st + 0.5 * dt * k2, t_val + 0.5 * dt, speed_ms, env_obj, panto, beyond, 0.0)
@@ -126,6 +153,15 @@ SUPPORTED_SPEEDS = (250, 300)
 
 @dataclass(frozen=True)
 class ShadowThresholds:
+    """Thresholds for validating the shadow model against the legacy/reference model.
+
+    Attributes:
+        mean_difference_pct: Maximum allowed percentage difference in mean contact force.
+        std_difference_pct: Maximum allowed percentage difference in contact force standard deviation.
+        contact_loss_difference_pp: Maximum allowed difference in loss of contact percentage points.
+        temporal_change_pct: Maximum allowed percentage difference due to timestep changes.
+        mesh_change_pct: Maximum allowed percentage difference due to mesh resolution changes.
+    """
     mean_difference_pct: float = 10.0
     std_difference_pct: float = 20.0
     contact_loss_difference_pp: float = 1.0
@@ -135,6 +171,18 @@ class ShadowThresholds:
 
 @dataclass(frozen=True)
 class ShadowConfig:
+    """Configuration parameters for running shadow validation scenarios.
+
+    Attributes:
+        duration: Duration of the distributed simulation in seconds.
+        legacy_duration: Duration of the legacy simulation in seconds.
+        n_spans: Number of catenary spans to model.
+        fine_elements_per_span: Number of elements per span in the fine mesh.
+        coarse_elements_per_span: Number of elements per span in the coarse mesh.
+        fine_dt: Timestep for the fine temporal resolution simulation.
+        coarse_dt: Timestep for the coarse temporal resolution simulation.
+        record_stride: Stride for recording simulation outputs.
+    """
     duration: float = 3.0
     legacy_duration: float = 6.0
     n_spans: int = 6
@@ -147,7 +195,17 @@ class ShadowConfig:
 
 
 def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) -> dict:
-    """Compare modal orders under identical inputs and retain mesh context."""
+    """Compare modal orders under identical inputs and retain mesh context.
+
+    Args:
+        speed_kmh: The train speed in kilometers per hour.
+        config: Configuration for the shadow simulation. Defaults to None.
+
+    Returns:
+        dict: A dictionary containing distributed metrics, results from different
+            modal orders (24, 36, 48, 60), convergence metrics between 36 and 48 modes,
+            validation gates, and the overall convergence status.
+    """
     speed_ms = kmh_to_ms(speed_kmh)
     config = config or ShadowConfig()
     dist_params = replace(DistributedCatenaryParams(), n_spans=config.n_spans, elements_per_span=config.fine_elements_per_span)
@@ -193,6 +251,14 @@ def run_modal_sensitivity(speed_kmh: int, config: ShadowConfig | None = None) ->
     }
 
 def _source_commit() -> str:
+    """Retrieves the current git source commit hash.
+
+    Attempts to read from environment variables first, then falls back to
+    running `git rev-parse HEAD`.
+
+    Returns:
+        str: The git commit hash or 'unavailable' if it cannot be determined.
+    """
     for name in ("RENDER_GIT_COMMIT", "GIT_COMMIT", "SOURCE_COMMIT"):
         if value := os.getenv(name):
             return value
@@ -210,6 +276,19 @@ def _source_commit() -> str:
 
 
 def _distributed_metrics(result: DistributedResult, duration: float) -> dict[str, float]:
+    """Calculates summary metrics from a distributed simulation result.
+
+    Only considers the steady-state portion (second half) of the simulation duration.
+
+    Args:
+        result: The result object from a distributed simulation.
+        duration: Total duration of the simulation in seconds.
+
+    Returns:
+        dict[str, float]: A dictionary containing computed metrics such as mean force,
+            standard deviation, maximum and minimum statistical forces, maximum uplift,
+            and percentage of contact loss.
+    """
     steady = result.t >= 0.5 * duration
     force = result.force[steady]
     wire = result.contact_wire[steady]
@@ -227,6 +306,16 @@ def _distributed_metrics(result: DistributedResult, duration: float) -> dict[str
 
 
 def _relative_difference(a: float, b: float, floor: float = 1.0e-9) -> float:
+    """Computes the relative percentage difference between two values.
+
+    Args:
+        a: The first value.
+        b: The second value.
+        floor: A minimum denominator value to prevent division by zero. Defaults to 1.0e-9.
+
+    Returns:
+        float: The absolute relative difference as a percentage.
+    """
     denominator = max(abs(a), abs(b), floor)
     return 100.0 * abs(a - b) / denominator
 
@@ -243,6 +332,17 @@ def _comparison_metrics(
         "loss_of_contact_pct",
     ),
 ) -> dict:
+    """Compares metrics between legacy and distributed simulation models.
+
+    Args:
+        legacy: Dictionary of metrics from the legacy simulation.
+        distributed: Dictionary of metrics from the distributed simulation.
+        keys: The tuple of keys to compare. Defaults to a standard set of metrics.
+
+    Returns:
+        dict: A dictionary mapping each key to a dictionary containing the legacy value,
+            the distributed value, and their percentage difference.
+    """
     out = {}
     for key in keys:
         lv = float(legacy[key])
@@ -263,7 +363,20 @@ def evaluate_gates(
     speed_kmh: int,
     thresholds: ShadowThresholds | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """Return explicit agreement gates and distributed EN benchmark rows."""
+    """Return explicit agreement gates and distributed EN benchmark rows.
+
+    Args:
+        legacy: Metrics from the legacy model simulation.
+        distributed: Metrics from the distributed model simulation (fine mesh and timestep).
+        temporal: Metrics from the distributed model with a coarser timestep.
+        mesh: Metrics from the distributed model with a coarser mesh.
+        speed_kmh: Train speed in kilometers per hour, used for EN50318 benchmark lookup.
+        thresholds: Threshold limits for validation gates. Defaults to None.
+
+    Returns:
+        tuple[list[dict], list[dict]]: A tuple containing a list of evaluated gate
+            dictionaries and a list of EN50318 benchmark row dictionaries.
+    """
     thresholds = thresholds or ShadowThresholds()
     mean_delta = _relative_difference(legacy["mean_N"], distributed["mean_N"])
     std_delta = _relative_difference(legacy["std_N"], distributed["std_N"])
@@ -311,6 +424,17 @@ def evaluate_gates(
 
 
 def _gate(name: str, value: float, limit: float, unit: str) -> dict:
+    """Creates a validation gate dictionary representing a pass/fail condition.
+
+    Args:
+        name: The name or description of the gate.
+        value: The computed value to evaluate.
+        limit: The maximum acceptable limit for the value.
+        unit: The unit of the value (e.g., "%", "pp").
+
+    Returns:
+        dict: A dictionary containing the gate information and whether it passed.
+    """
     return {
         "name": name,
         "value": round(float(value), 3),
@@ -327,7 +451,19 @@ def classify_operating_point(
     turbulence_gain: float = 1.0,
     gust_active: bool = False,
 ) -> dict:
-    """Map live knobs to supported shadow evidence without extrapolating."""
+    """Map live knobs to supported shadow evidence without extrapolating.
+
+    Args:
+        snapshot: Dictionary containing current shadow scenario statuses.
+        speed_kmh: The operating speed in kilometers per hour.
+        tension_factor: Factor of nominal wire tension. Defaults to 1.0.
+        turbulence_gain: Gain applied to aerodynamic turbulence. Defaults to 1.0.
+        gust_active: Whether a transient wind gust is active. Defaults to False.
+
+    Returns:
+        dict: A dictionary specifying the classification status, speed, and any
+            reasons for falling outside the validated envelope.
+    """
     reasons = []
     rounded_speed = int(round(speed_kmh))
     if rounded_speed not in SUPPORTED_SPEEDS or abs(speed_kmh - rounded_speed) > 0.1:
@@ -359,6 +495,20 @@ def run_modal_calibration_scenario(
     config: ShadowConfig | None = None,
     thresholds: ShadowThresholds | None = None,
 ) -> dict:
+    """Runs a scenario to calibrate and validate the real-time modal model.
+
+    Args:
+        speed_kmh: The simulation speed in kilometers per hour.
+        config: Configuration for the shadow scenarios. Defaults to None.
+        thresholds: Validation threshold definitions. Defaults to None.
+
+    Raises:
+        ValueError: If the requested speed is not in the supported speeds list.
+
+    Returns:
+        dict: A comprehensive report of the calibration scenario, containing
+            status, metrics, gates, numerics, and metadata.
+    """
     if speed_kmh not in SUPPORTED_SPEEDS:
         raise ValueError(f"supported shadow speeds are {SUPPORTED_SPEEDS}")
     config = config or ShadowConfig()
@@ -422,7 +572,20 @@ def run_shadow_scenario(
     config: ShadowConfig | None = None,
     thresholds: ShadowThresholds | None = None,
 ) -> dict:
-    """Run one nominal vertical benchmark with temporal and mesh cross-checks."""
+    """Run one nominal vertical benchmark with temporal and mesh cross-checks.
+
+    Args:
+        speed_kmh: The simulation speed in kilometers per hour.
+        config: Configuration parameters for the shadow run. Defaults to None.
+        thresholds: Limits for validation gates. Defaults to None.
+
+    Raises:
+        ValueError: If the provided speed is not supported.
+
+    Returns:
+        dict: A comprehensive scenario report including metrics, gates, EN50318
+            comparisons, and computation metadata.
+    """
     if speed_kmh not in SUPPORTED_SPEEDS:
         raise ValueError(f"supported shadow speeds are {SUPPORTED_SPEEDS}")
     config = config or ShadowConfig()
@@ -513,13 +676,26 @@ Runner = Callable[[int], dict]
 
 
 class ShadowValidationService:
-    """One-worker cache keeps expensive shadow runs away from the live loop."""
+    """One-worker cache keeps expensive shadow runs away from the live loop.
+
+    This service executes validation scenarios asynchronously using a single
+    background thread, caching the results to avoid blocking the main
+    control loop.
+    """
 
     def __init__(
         self,
         runner: Runner = run_shadow_scenario,
         authoritative_model: str = "legacy-reduced",
     ):
+        """Initializes the ShadowValidationService.
+
+        Args:
+            runner: A callable that runs a validation scenario for a given speed.
+                Defaults to run_shadow_scenario.
+            authoritative_model: Name of the model considered authoritative.
+                Defaults to "legacy-reduced".
+        """
         self._runner = runner
         self._authoritative_model = authoritative_model
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="shadow-validation")
@@ -528,12 +704,24 @@ class ShadowValidationService:
         self._reports: dict[int, dict] = {}
 
     def warm(self) -> None:
+        """Pre-emptively triggers execution of scenarios for all supported speeds.
+
+        Only submits tasks for speeds that haven't already been run or submitted.
+        """
         with self._lock:
             for speed in SUPPORTED_SPEEDS:
                 if speed not in self._futures and speed not in self._reports:
                     self._futures[speed] = self._executor.submit(self._runner, speed)
 
     def snapshot(self) -> dict:
+        """Takes a snapshot of the current state of shadow validation runs.
+
+        Automatically triggers a warming cycle before collecting the status.
+
+        Returns:
+            dict: A payload summarizing the overall validation mode, the authoritative
+                model, and a mapping of speeds to their scenario results or statuses.
+        """
         self.warm()
         scenarios = {}
         with self._lock:
@@ -566,6 +754,14 @@ class ShadowValidationService:
         }
 
     def wait(self, timeout: float | None = None) -> dict:
+        """Blocks until all supported speed scenarios have completed or timed out.
+
+        Args:
+            timeout: Maximum time to wait in seconds, or None to wait indefinitely.
+
+        Returns:
+            dict: The final snapshot containing scenario results.
+        """
         self.warm()
         started = time.monotonic()
         for future in tuple(self._futures.values()):
@@ -574,10 +770,19 @@ class ShadowValidationService:
         return self.snapshot()
 
     def close(self) -> None:
+        """Shuts down the background thread executor and cancels pending futures."""
         self._executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _main() -> int:
+    """Entry point for running the script directly to generate shadow reports.
+
+    Parses command-line arguments and outputs JSON validation reports to stdout
+    or a specified file.
+
+    Returns:
+        int: The exit status code.
+    """
     parser = argparse.ArgumentParser(description="Generate reproducible shadow-validation JSON")
     parser.add_argument("--speed", type=int, action="append", choices=SUPPORTED_SPEEDS)
     parser.add_argument("--output", type=Path)

@@ -54,12 +54,18 @@ class RuntimeParams:
     """Mutable live knobs (BeyondEnvelope is frozen, so we mirror it here)."""
 
     def __init__(self):
+        """Initialize the default runtime parameters."""
         self.speed_kmh = 250.0
         self.tension_factor = 1.0
         self.turbulence_gain = 1.0
         self.gust = 0.0  # decays each step
 
     def beyond(self) -> BeyondEnvelope:
+        """Convert the current runtime parameters into an immutable BeyondEnvelope.
+
+        Returns:
+            BeyondEnvelope: An instance containing the applied factors.
+        """
         return BeyondEnvelope(
             tension_factor=self.tension_factor,
             turbulence_gain=self.turbulence_gain,
@@ -68,6 +74,11 @@ class RuntimeParams:
 
 
 class Engine:
+    """Real-time simulation engine that manages passive and active (PINN-controlled) wire dynamics.
+
+    Runs parallel instances of the system to contrast controlled vs uncontrolled pantograph forces.
+    """
+
     def __init__(
         self,
         dt: float = 1.0e-3,
@@ -76,6 +87,15 @@ class Engine:
         predictor=None,
         sensor_params: SensorParams | None = None,
     ):
+        """Initialize the real-time simulation Engine.
+
+        Args:
+            dt (float, optional): The simulation integration time step. Defaults to 1.0e-3.
+            window_s (float, optional): Window size in seconds for computing metrics. Defaults to 3.0.
+            seed (int, optional): Random seed for reproducibility. Defaults to 2024.
+            predictor (PINNPredictor, optional): The PINN predictor instance. Defaults to None.
+            sensor_params (SensorParams, optional): Sensor noise and delay parameters. Defaults to None.
+        """
         self.dt = dt
         self.cat = CatenaryParams()
         self.panto = PantographParams()
@@ -188,24 +208,56 @@ class Engine:
         self.ideal_controller.reset_timing()
 
     def _equilibrium(self, speed_ms):
+        """Calculate the static equilibrium state of the pantograph at a given speed.
+
+        Args:
+            speed_ms (float): Speed in meters per second.
+
+        Returns:
+            np.ndarray: The static equilibrium state vector.
+        """
         from backend.sim.solver import static_equilibrium
         return static_equilibrium(speed_ms, self.dist, self.panto, self.rp.beyond())
 
     # --- inputs from frontend ---
     def set_speed(self, kmh: float):
+        """Set the simulation train speed within allowed limits.
+
+        Args:
+            kmh (float): Target speed in kilometers per hour.
+        """
         self.rp.speed_kmh = float(np.clip(kmh, 80, 400))
 
     def set_tension(self, factor: float):
+        """Set the catenary tension scaling factor.
+
+        Args:
+            factor (float): The multiplier for tension (1.0 is nominal).
+        """
         self.rp.tension_factor = float(np.clip(factor, 0.3, 1.0))
 
     def set_turbulence(self, gain: float):
+        """Set the aerodynamic turbulence gain factor.
+
+        Args:
+            gain (float): The multiplier for aerodynamic turbulence.
+        """
         self.rp.turbulence_gain = float(np.clip(gain, 0.5, 4.0))
 
     def trigger_gust(self, magnitude: float = 70.0):
+        """Apply a transient wind gust to the system.
+
+        Args:
+            magnitude (float, optional): The force magnitude of the gust in Newtons. Defaults to 70.0.
+        """
         self.rp.gust = float(magnitude)
 
     def _controller_within_training_support(self) -> bool:
-        """Conservative boundary of the scenarios represented in PINN training."""
+        """Conservative boundary of the scenarios represented in PINN training.
+
+        Returns:
+            bool: True if the current operating parameters are within the supported envelope, False otherwise.
+        """
         return (
             self.rp.speed_kmh <= 360.0
             and self.rp.tension_factor >= 0.5
@@ -213,6 +265,10 @@ class Engine:
         )
 
     def _sync_catenary_tension(self):
+        """Synchronize the underlying catenary models to the current tension factor.
+
+        If the tension factor changes, recomputes and switches out the dynamic models.
+        """
         factor = round(self.rp.tension_factor, 2)
         if factor == self._catenary_tension_factor:
             return
@@ -238,6 +294,18 @@ class Engine:
         self._catenary_tension_factor = factor
 
     def _rk4(self, state, speed_ms, beyond, f_control, environment):
+        """Perform a single 4th-order Runge-Kutta integration step.
+
+        Args:
+            state (np.ndarray): The current state vector.
+            speed_ms (float): The speed in meters per second.
+            beyond (BeyondEnvelope): Current off-nominal runtime parameters.
+            f_control (float): The active control force applied.
+            environment (CoupledWireEnvironment): The local wire environment.
+
+        Returns:
+            np.ndarray: The advanced state vector after the RK4 step.
+        """
         dt = self.dt
         k1, _ = deriv(state, self.t, speed_ms, environment, self.panto, beyond, f_control)
         k2, _ = deriv(state + 0.5 * dt * k1, self.t + 0.5 * dt, speed_ms, environment, self.panto, beyond, f_control)
@@ -254,7 +322,19 @@ class Engine:
         beyond,
         f_control,
     ):
-        """Implicitly exchange force and displacement across the moving contact."""
+        """Implicitly exchange force and displacement across the moving contact.
+
+        Args:
+            state (np.ndarray): The pantograph state vector.
+            environment (CoupledWireEnvironment): The environment determining local wire responses.
+            wire (RealtimeCatenary): The simulated wire element being interacted with.
+            speed_ms (float): The train speed in meters per second.
+            beyond (BeyondEnvelope): Extra-envelope parameters.
+            f_control (float): The active control force in Newtons.
+
+        Returns:
+            tuple: The updated state vector and the resolved contact force.
+        """
         force = wire.last_contact_force
         old_ripple = wire.contact_displacement()
         old_ripple_velocity = wire.contact_velocity()
@@ -317,6 +397,12 @@ class Engine:
         return next_state, force
 
     def step(self, n_steps: int = 1, audit_callback=None):
+        """Advance the full simulation engine by a set number of discrete steps.
+
+        Args:
+            n_steps (int, optional): The number of steps to simulate. Defaults to 1.
+            audit_callback (callable, optional): A callback function invoked at each step. Defaults to None.
+        """
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
         for _ in range(n_steps):
             self._sync_catenary_tension()
@@ -423,7 +509,11 @@ class Engine:
                 audit_callback(self.audit_sample())
 
     def audit_sample(self) -> dict:
-        """Compact native-rate evidence without constructing the heavy UI frame."""
+        """Compact native-rate evidence without constructing the heavy UI frame.
+
+        Returns:
+            dict: High-frequency audit variables for telemetry logging.
+        """
         return {
             "t_s": round(self.t, 6),
             "speed_kmh": round(self.rp.speed_kmh, 3),
@@ -482,7 +572,11 @@ class Engine:
         }
 
     def constants_snapshot(self) -> dict:
-        """Complete configuration evidence sampled separately from 1 kHz state."""
+        """Complete configuration evidence sampled separately from 1 kHz state.
+
+        Returns:
+            dict: The system configuration snapshot and parameters.
+        """
         pinn_model = getattr(self.predictor, "model", None)
         pinn_config = getattr(pinn_model, "cfg", None)
         return {
@@ -531,12 +625,25 @@ class Engine:
         }
 
     def _metrics(self, win):
+        """Compute statistical metrics over a window of force values.
+
+        Args:
+            win (deque): The trailing window of force values.
+
+        Returns:
+            dict: A dictionary with the computed standard deviation and percentage of arcing (loss of contact).
+        """
         if len(win) < 2:
             return {"std": 0.0, "arc_pct": 0.0}
         a = np.fromiter(win, dtype=float)
         return {"std": float(a.std()), "arc_pct": 100.0 * float((a <= 0.0).mean())}
 
     def frame(self) -> dict:
+        """Construct the comprehensive summary frame for frontend visualization and logging.
+
+        Returns:
+            dict: The aggregated frame state encompassing all simulated pantograph instances and timing metrics.
+        """
         speed_ms = kmh_to_ms(self.rp.speed_kmh)
         beyond = self.rp.beyond()
         yw_p = float(self.env_p.y_wire(self.t, speed_ms, beyond))

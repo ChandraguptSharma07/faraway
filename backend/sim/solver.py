@@ -27,13 +27,24 @@ from .parameters import BeyondEnvelope, CatenaryParams, PantographParams
 
 
 def _contact_force(yw: float, z1: float, kc: float) -> float:
-    # Restoring (stable) penalty contact: the head presses UP into the wire, so the
-    # contact force grows with head penetration past the wire datum, p = kc*(z1 - yw),
-    # and the wire reacts DOWN on the head (-p enters the head EOM). Clamp at 0: when
-    # the head falls below the wire (z1 < yw) contact is lost (no tension).
-    # NOTE: the brief writes p = kc*(y_wire - z1) with RHS -P; that pairing is positive
-    # feedback and diverges. We use the physically-equivalent stable sign convention
-    # (documented in self_notes/decisions.md).
+    """Calculate the contact force between the pantograph head and the contact wire.
+    
+    Restoring (stable) penalty contact: the head presses UP into the wire, so the
+    contact force grows with head penetration past the wire datum, p = kc*(z1 - yw),
+    and the wire reacts DOWN on the head (-p enters the head EOM). Clamp at 0: when
+    the head falls below the wire (z1 < yw) contact is lost (no tension).
+    NOTE: the brief writes p = kc*(y_wire - z1) with RHS -P; that pairing is positive
+    feedback and diverges. We use the physically-equivalent stable sign convention
+    (documented in self_notes/decisions.md).
+
+    Args:
+        yw (float): Effective vertical trajectory of the contact wire.
+        z1 (float): Vertical displacement of the pantograph head.
+        kc (float): Contact stiffness between the wire and the pantograph.
+
+    Returns:
+        float: The calculated contact force. Clamped at 0.0 if contact is lost.
+    """
     p = kc * (z1 - yw)
     return p if p > 0.0 else 0.0
 
@@ -47,10 +58,23 @@ def deriv(
     beyond: BeyondEnvelope,
     f_control: float = 0.0,
 ) -> tuple[np.ndarray, float]:
-    """State derivative + the contact force at this instant.
+    """Calculate the state derivative and the contact force at a given instant.
 
     f_control is the AeroPINN force applied to the articulated frame, matching
     pneumatic active-pantograph experiments (0 for passive).
+
+    Args:
+        state (np.ndarray): Current state vector [z1, z1', z2, z2'].
+        t (float): Current time in seconds.
+        speed_ms (float): Speed of the train in meters per second.
+        dist (Disturbance): Disturbance model instance.
+        panto (PantographParams): Pantograph parameters.
+        beyond (BeyondEnvelope): Beyond-envelope parameters.
+        f_control (float, optional): Control force applied to the frame. Defaults to 0.0.
+
+    Returns:
+        tuple[np.ndarray, float]: A tuple containing the state derivative array
+            and the contact force at the current instant.
     """
     z1, z1d, z2, z2d = state
     if hasattr(dist, "contact_force"):
@@ -73,6 +97,19 @@ def deriv(
 
 @dataclass
 class SimResult:
+    """Data class representing the result of a pantograph simulation.
+    
+    Attributes:
+        t (np.ndarray): Array of time steps.
+        z1 (np.ndarray): Vertical displacement of the pantograph head over time.
+        z2 (np.ndarray): Vertical displacement of the pantograph frame over time.
+        force (np.ndarray): Contact force between the pantograph and wire over time.
+        contact_lost (np.ndarray): Boolean array indicating if contact is lost at each step.
+        speed_ms (float): Speed of the train in meters per second.
+        step_wall_ms (float): Mean wall-clock time per integration step in milliseconds.
+        eval_mask (np.ndarray): Boolean array true over the evaluated middle span window.
+        s_wire_eff (float): Effective catenary stiffness in N/m.
+    """
     t: np.ndarray
     z1: np.ndarray
     z2: np.ndarray
@@ -90,7 +127,18 @@ def static_equilibrium(
     panto: PantographParams,
     beyond: BeyondEnvelope,
 ) -> np.ndarray:
-    """Solve the static state so the sim starts settled (no startup transient)."""
+    """Solve the static state so the simulation starts settled (no startup transient).
+
+    Args:
+        speed_ms (float): Speed of the train in meters per second.
+        dist (Disturbance): Disturbance model instance.
+        panto (PantographParams): Pantograph parameters.
+        beyond (BeyondEnvelope): Beyond-envelope parameters.
+
+    Returns:
+        np.ndarray: The initial state vector [z1, 0.0, z2, 0.0] representing
+            static equilibrium.
+    """
     fa = dist.aero_force(speed_ms, beyond)
     kc, k1, k2 = panto.kc, panto.k1, panto.k2
     # Linear static system (assume in contact, y_wire mean ~ 0):
@@ -117,6 +165,21 @@ def simulate(
     """Integrate the passive (or controlled) system over `duration` seconds.
 
     f_control_fn(t, state, force) -> float lets the controller inject a frame force.
+
+    Args:
+        speed_ms (float): Speed of the train in meters per second.
+        duration (float, optional): Total simulation duration in seconds. Defaults to 6.0.
+        dt (float, optional): Integration time step in seconds. Defaults to 1.0e-3.
+        cat (CatenaryParams | None, optional): Catenary parameters. Defaults to None.
+        panto (PantographParams | None, optional): Pantograph parameters. Defaults to None.
+        beyond (BeyondEnvelope | None, optional): Beyond-envelope parameters. Defaults to None.
+        dist (Disturbance | None, optional): Disturbance model instance. Defaults to None.
+        f_control_fn (callable, optional): Function (t, state, force) -> float to inject 
+            a control force. Defaults to None.
+        seed (int, optional): Random seed for disturbances. Defaults to 12345.
+
+    Returns:
+        SimResult: The result of the simulation.
     """
     cat = cat or CatenaryParams()
     panto = panto or PantographParams()
@@ -168,7 +231,14 @@ def simulate(
 
 
 def metrics(res: SimResult) -> dict:
-    """EN 50318-style contact-force statistics over the evaluated window."""
+    """Calculate EN 50318-style contact-force statistics over the evaluated window.
+
+    Args:
+        res (SimResult): The result from the simulation.
+
+    Returns:
+        dict: A dictionary containing the contact-force statistics and metrics.
+    """
     f = res.force[res.eval_mask]
     mean = float(f.mean())
     std = float(f.std())

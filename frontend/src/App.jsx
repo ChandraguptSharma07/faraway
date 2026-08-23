@@ -9,6 +9,21 @@ const World3D = lazy(() => import('./components/World3D'))
 const CredibilityView = lazy(() => import('./components/CredibilityView'))
 const JourneyLogs = lazy(() => import('./components/JourneyLogs'))
 
+/**
+ * The main application component for the AeroPINN dashboard.
+ * Manages the global telemetry connection state, UI overlay visibility, and passes
+ * telemetry data to the 3D world and 2D readouts.
+ *
+ * State:
+ * - showCred (boolean): Controls the visibility of the CredibilityView dialog.
+ * - showJourneys (boolean): Controls the visibility of the JourneyLogs dialog.
+ * - reduced (boolean): Follows the OS 'prefers-reduced-motion' setting.
+ * - showPhysics (boolean): Toggles the display of live force vectors and physics overlays.
+ * - amplifyMotion (boolean): Toggles visual motion amplification for better visibility.
+ * - cameraReset (number): Incremented to trigger a camera reset in the 3D world.
+ *
+ * @returns {JSX.Element} The fully assembled application UI.
+ */
 export default function App() {
   const { frameRef, historyRef, connected, currentJourney, send } = useTelemetry()
   const [showCred, setShowCred] = useState(false)

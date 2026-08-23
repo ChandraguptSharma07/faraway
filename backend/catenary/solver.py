@@ -24,6 +24,23 @@ ForceFunction = Callable[[float, np.ndarray, float], float]
 
 @dataclass
 class DistributedResult:
+    """Result of a distributed pantograph-catenary simulation.
+
+    Attributes:
+        t (np.ndarray): Time values for sampled steps (s).
+        x (np.ndarray): Longitudinal position of the pantograph head for sampled steps (m).
+        z1 (np.ndarray): Vertical displacement of the pantograph head for sampled steps (m).
+        z2 (np.ndarray): Vertical displacement of the pantograph frame for sampled steps (m).
+        wire_at_contact (np.ndarray): Vertical displacement of the contact wire at the contact point (m).
+        force (np.ndarray): Contact force between the pantograph and the wire (N).
+        contact_lost (np.ndarray): Boolean mask indicating where contact force drops to zero or below.
+        slack_droppers (np.ndarray): Number of slack (non-tensioned) droppers at each sampled step.
+        contact_wire (np.ndarray): History of contact wire vertical displacements at all nodes.
+        messenger_wire (np.ndarray): History of messenger wire vertical displacements at all nodes.
+        speed_ms (float): Constant travelling speed of the pantograph (m/s).
+        step_wall_ms (float): Average wall-clock time taken per simulation step (ms).
+        system (DistributedSystem): The assembled distributed system model used in the simulation.
+    """
     t: np.ndarray
     x: np.ndarray
     z1: np.ndarray
@@ -40,6 +57,15 @@ class DistributedResult:
 
 
 def _external_force(system: DistributedSystem, head_force: float) -> np.ndarray:
+    """Calculates the external force vector for the distributed system.
+
+    Args:
+        system (DistributedSystem): The distributed catenary-pantograph system.
+        head_force (float): The external vertical force applied to the pantograph head.
+
+    Returns:
+        np.ndarray: A force vector of size system.ndof with the applied external forces.
+    """
     force = np.zeros(system.ndof)
     force[system.z1_index] = head_force
     force[system.z2_index] = system.panto.F0
@@ -51,6 +77,21 @@ def _contact_terms(
     x: float,
     speed_ms: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+    """Computes terms related to the moving contact point.
+
+    Args:
+        system (DistributedSystem): The distributed catenary-pantograph system.
+        x (float): Current longitudinal position of the contact point (m).
+        speed_ms (float): Travelling speed of the contact point (m/s).
+
+    Returns:
+        tuple: A tuple containing:
+            - g (np.ndarray): Contact shape vector of size system.ndof.
+            - nodes (np.ndarray): Indices of the finite element nodes at the contact point.
+            - weights (np.ndarray): Interpolation weights for the contact point.
+            - datum (float): Reference geometry elevation at the contact point (m).
+            - datum_velocity (float): Vertical velocity of the reference geometry at the contact point (m/s).
+    """
     g, nodes, weights = system.contact_vector(x)
     datum, slope = system.wire_reference(x)
     datum_velocity = slope * speed_ms
@@ -63,7 +104,20 @@ def _static_equilibrium(
     speed_ms: float,
     head_force: float = 0.0,
 ) -> np.ndarray:
-    """Settle the prestressed system at the initial moving-contact location."""
+    """Settle the prestressed system at the initial moving-contact location.
+
+    Iteratively finds the static equilibrium position of the coupled
+    catenary-pantograph system, accounting for non-linear dropper slackening.
+
+    Args:
+        system (DistributedSystem): The distributed catenary-pantograph system.
+        x (float): Initial longitudinal position of the pantograph (m).
+        speed_ms (float): Travelling speed of the pantograph (m/s).
+        head_force (float, optional): Initial external upward force on the pantograph head. Defaults to 0.0.
+
+    Returns:
+        np.ndarray: The static equilibrium displacement vector of size system.ndof.
+    """
     q = np.zeros(system.ndof)
     g, _, _, datum, _ = _contact_terms(system, x, speed_ms)
     kc = system.params.contact_stiffness
@@ -101,6 +155,26 @@ def simulate_distributed(
     It is intentionally external to the catenary parameter set so its provenance can
     be calibrated independently. ``initial_head_force`` must match its value at
     ``t=0`` when that force is already present, preventing an artificial load step.
+
+    Args:
+        speed_ms (float): Constant travelling speed of the pantograph (m/s).
+        duration (float, optional): Total simulation duration (s). Defaults to 1.0.
+        dt (float, optional): Integration time step (s). Defaults to 5.0e-4.
+        params (DistributedCatenaryParams | None, optional): Parameters for the distributed catenary. Defaults to None.
+        panto (PantographParams | None, optional): Parameters for the pantograph. Defaults to None.
+        start_x (float | None, optional): Starting longitudinal position (m). Defaults to None.
+        head_force_fn (ForceFunction | None, optional): Callable providing external head force given (t, q, p). Defaults to None.
+        initial_head_force (float, optional): External head force at t=0 to avoid load steps. Defaults to 0.0.
+        record_stride (int, optional): Number of integration steps between recorded samples. Defaults to 1.
+        max_active_iterations (int, optional): Maximum Newton-Raphson iterations for non-linear contact/dropper status per step. Defaults to 6.
+
+    Returns:
+        DistributedResult: A record of the simulation history and performance metrics.
+
+    Raises:
+        ValueError: If `speed_ms`, `duration`, or `dt` are not positive.
+        ValueError: If `record_stride` or `max_active_iterations` are less than 1.
+        ValueError: If the simulation bounds exceed the modeled track length.
     """
     if speed_ms <= 0.0 or duration <= 0.0 or dt <= 0.0:
         raise ValueError("speed_ms, duration, and dt must be positive")
@@ -159,6 +233,14 @@ def simulate_distributed(
     a = linalg.solve(system.M, applied - c @ v - k @ q, assume_a="pos")
 
     def record(index: int, x: float, p_now: float, slack_now: int) -> None:
+        """Records a single time step's state into the output arrays.
+
+        Args:
+            index (int): The index in the output arrays to write to.
+            x (float): Current longitudinal position of the pantograph.
+            p_now (float): Current contact force.
+            slack_now (int): Current number of slack droppers.
+        """
         _, local_nodes, local_weights = system.contact_vector(x)
         z1_out[index] = q[system.z1_index]
         z2_out[index] = q[system.z2_index]

@@ -17,6 +17,18 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class PantographParams:
+    """Parameters for the EN 50318 reference pantograph (two-mass model).
+
+    Attributes:
+        m1: Collector-head mass (kg).
+        m2: Articulated-frame mass (kg).
+        k1: Head stiffness (N/m).
+        k2: Frame stiffness (N/m).
+        r1: Head damping (Ns/m).
+        r2: Frame damping (Ns/m).
+        kc: Contact penalty spring for contact-model stability (N/m).
+        F0: Static uplift force, tuned so passive mean contact force lands at the EN 50318 setpoint (~115 N) (N).
+    """
     # --- EN 50318 reference pantograph (two-mass) ---
     m1: float = 7.2        # kg   collector-head mass
     m2: float = 15.0       # kg   articulated-frame mass
@@ -33,6 +45,20 @@ class PantographParams:
 
 @dataclass(frozen=True)
 class CatenaryParams:
+    """Parameters for the EN 50318 reference catenary model.
+    
+    Attributes:
+        span_length: Length of a single span, within the 50-65 m high-speed range (m).
+        n_spans: Total number of spans in the model.
+        eval_span: 0-indexed middle span to evaluate, avoiding boundary effects.
+        a_span: Span-passing wire-height amplitude (m).
+        a_span2: Second harmonic amplitude for dropper spacing within a span (m).
+        c_aero: Aerodynamic uplift coefficient, reduced from published 0.01301 to keep mean in 110-120 N (Ns^2/m^2).
+        c_aero_published: The original published aerodynamic uplift coefficient, kept for reference (Ns^2/m^2).
+        turb_std: Standard deviation of stochastic turbulence layered on top (m).
+        turb_fmax: Upper band limit for stochastic turbulence (Hz).
+        s_wire_eff: Effective catenary stiffness used to report wire uplift at the support (N/m).
+    """
     # Reference catenary is a 10-span model; results read from a middle span.
     span_length: float = 60.0   # m   (within the 50-65 m high-speed range)
     n_spans: int = 10
@@ -73,6 +99,11 @@ class BeyondEnvelope:
     """Knobs that push past the EN 50318-validated envelope (Step 2 narrative).
 
     Defaults are neutral (1.0 / nominal) so the validated regime is untouched.
+    
+    Attributes:
+        tension_factor: Multiplier for contact-wire tension where <1 implies degraded tension (softer, larger sag).
+        turbulence_gain: Multiplier for turbulence where >1 amplifies turbulence.
+        gust: Transient aerodynamic gust force on the collector head (N).
     """
     tension_factor: float = 1.0    # <1 = degraded contact-wire tension (softer, larger sag)
     turbulence_gain: float = 1.0   # >1 = amplified turbulence
@@ -85,9 +116,27 @@ CATENARY = CatenaryParams()
 
 
 def kmh_to_ms(kmh: float) -> float:
+    """Converts speed from kilometers per hour to meters per second.
+
+    Args:
+        kmh: The speed in kilometers per hour.
+
+    Returns:
+        The equivalent speed in meters per second.
+    """
     return kmh / 3.6
 
 
 def span_frequency(speed_ms: float, span_length: float = CATENARY.span_length) -> float:
-    """Span-passing temporal frequency (Hz). Scales with train speed."""
+    """Calculates the span-passing temporal frequency.
+
+    The frequency scales directly with the train speed.
+
+    Args:
+        speed_ms: The speed of the train in meters per second.
+        span_length: The length of a single catenary span in meters. Defaults to CATENARY.span_length.
+
+    Returns:
+        The span-passing frequency in Hertz (Hz).
+    """
     return speed_ms / span_length

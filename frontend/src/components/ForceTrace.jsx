@@ -10,6 +10,16 @@ const SETPOINT = 115
 // Live contact-force trace: passive (jagged, spiking through the zero/arc threshold)
 // vs AeroPINN (near-flat ribbon at the setpoint). Updated imperatively from the
 // telemetry ring buffer in a rAF loop — no React re-render per sample.
+/**
+ * Live contact-force trace visualization component.
+ * Displays a passive trace (jagged, spiking) vs AeroPINN (near-flat ribbon at setpoint).
+ * Updated imperatively from the telemetry ring buffer in a rAF loop to avoid React re-renders per sample.
+ *
+ * @param {Object} props - The component props.
+ * @param {React.MutableRefObject<Object>} props.historyRef - Ref to the telemetry history ring buffer.
+ * @param {React.MutableRefObject<Object>} props.frameRef - Ref to the current telemetry frame.
+ * @returns {JSX.Element} The ForceTrace visualization component.
+ */
 export default function ForceTrace({ historyRef, frameRef }) {
   const wrapRef = useRef(null)
   const uRef = useRef(null)

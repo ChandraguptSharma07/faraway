@@ -34,6 +34,20 @@ F_CONTROL_MAX = 100.0  # N  covers the 98.2 N selected cylinder-force cap
 
 
 def _wire_features(dist: Disturbance, t: float, speed_ms: float, beyond: BeyondEnvelope):
+    """Extract local wire features (position, velocity, acceleration) via central difference.
+
+    Args:
+        dist (Disturbance): Disturbance model instance.
+        t (float): Current time in seconds.
+        speed_ms (float): Speed of the pantograph in meters per second.
+        beyond (BeyondEnvelope): Beyond-envelope parameters.
+
+    Returns:
+        tuple[float, float, float]: A tuple containing:
+            - y0 (float): Wire position at time t.
+            - y0d (float): First derivative of wire position (velocity).
+            - y0dd (float): Second derivative of wire position (acceleration).
+    """
     d = 1.0e-4
     y0 = float(dist.y_wire(t, speed_ms, beyond))
     yp = float(dist.y_wire(t + d, speed_ms, beyond))
@@ -44,7 +58,22 @@ def _wire_features(dist: Disturbance, t: float, speed_ms: float, beyond: BeyondE
 
 
 def _rollout_h(state, t, speed_ms, dist, panto, beyond, f_control, H, n_sub=10):
-    """Integrate the true EOM from t over horizon H with constant f_control (RK4)."""
+    """Integrate the true EOM from t over horizon H with constant f_control (RK4).
+
+    Args:
+        state (array_like): Current state vector [z1, z1d, z2, z2d].
+        t (float): Current time in seconds.
+        speed_ms (float): Speed of the pantograph in meters per second.
+        dist (Disturbance): Disturbance model instance.
+        panto (PantographParams): Pantograph parameters.
+        beyond (BeyondEnvelope): Beyond-envelope parameters.
+        f_control (float): Constant frame force applied over the horizon.
+        H (float): Prediction horizon duration in seconds.
+        n_sub (int, optional): Number of sub-steps for the RK4 integration. Defaults to 10.
+        
+    Returns:
+        np.ndarray: The predicted state vector at t + H.
+    """
     dt = H / n_sub
     s = np.asarray(state, dtype=float)
     ti = t
@@ -64,10 +93,24 @@ def generate_dataset(
     seed: int = 7,
     panto: PantographParams | None = None,
 ):
-    """Return (ctx[N,9], target_state[N,4]) as float32 numpy arrays.
+    """Generate a dataset of simulated transitions for PINN training.
+
+    Return (ctx[N,9], target_state[N,4]) as float32 numpy arrays.
 
     ctx     = [z1, z1d, z2, z2d, f_aero, f_frame, y0, y0d, y0dd]
     target  = [z1(H), z2(H), z1d(H), z2d(H)]
+
+    Args:
+        n_samples (int, optional): Number of training samples to generate. Defaults to 60000.
+        horizon (float, optional): Prediction horizon H in seconds. Defaults to 5.0e-3.
+        seed (int, optional): Random seed for reproducibility. Defaults to 7.
+        panto (PantographParams | None, optional): Pantograph parameters. If None, default 
+            parameters are used. Defaults to None.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing:
+            - ctx (np.ndarray): Context array of shape (N, 9) with type float32.
+            - target_state (np.ndarray): Target state array of shape (N, 4) with type float32.
     """
     panto = panto or PantographParams()
     rng = np.random.default_rng(seed)

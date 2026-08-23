@@ -25,6 +25,16 @@ const PX_PER_N = 0.32
 const ARROW_MAX_PX = 48
 const MONO = 'JetBrains Mono, ui-monospace, monospace'
 
+/**
+ * Renders a 2.5D side elevation of the world, displaying two lanes (passive and active)
+ * representing the pantograph interacting with the wire. Uses HTML5 Canvas for drawing.
+ *
+ * @param {Object} props - The component props.
+ * @param {React.MutableRefObject} props.frameRef - Reference to the latest telemetry frame.
+ * @param {boolean} props.prefersReducedMotion - Whether to reduce rendering motion (e.g., removing background streaks/jitter).
+ * @param {boolean} [props.showPhysics=true] - Whether to display force arrows and physics equations.
+ * @returns {JSX.Element} A canvas element depicting the simulation.
+ */
 export default function WorldCanvas({ frameRef, prefersReducedMotion, showPhysics = true }) {
   const canvasRef = useRef(null)
 
@@ -79,6 +89,21 @@ export default function WorldCanvas({ frameRef, prefersReducedMotion, showPhysic
   return <canvas ref={canvasRef} className="world-canvas" />
 }
 
+/**
+ * Draws a single lane depicting the interaction between the pantograph and contact wire.
+ * 
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} W - Canvas width.
+ * @param {number} y0 - The top Y coordinate of the lane.
+ * @param {number} H - Height of the lane.
+ * @param {string} label - Lane label (e.g., 'PASSIVE' or 'AeroPINN').
+ * @param {Object} sys - The specific system data (passive or aeropinn) from the frame.
+ * @param {Object} frame - The full telemetry frame data.
+ * @param {number} worldX - The scroll offset reflecting the train's motion.
+ * @param {boolean} reduced - Reduced motion flag.
+ * @param {boolean} showPhysics - Whether to draw physics overlays.
+ * @param {boolean} isAero - Whether this lane uses AeroPINN control.
+ */
 function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced, showPhysics, isAero) {
   const contactX = W * 0.34
   const wireBaseY = y0 + H * 0.42
@@ -219,6 +244,14 @@ function drawLane(ctx, W, y0, H, label, sys, frame, worldX, reduced, showPhysics
   }
 }
 
+/**
+ * Draws a stylized train outline positioned underneath the pantograph.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} contactX - The X coordinate of the contact point (pantograph base).
+ * @param {number} railY - The Y coordinate of the rail/ground.
+ * @param {number} H - The total height of the lane containing the train.
+ */
 function drawTrain(ctx, contactX, railY, H) {
   const len = Math.min(360, H * 1.2)
   const x = contactX - len * 0.5
@@ -257,6 +290,14 @@ function drawTrain(ctx, contactX, railY, H) {
   ctx.restore()
 }
 
+/**
+ * Draws the mechanical pantograph structure connecting the train roof to the wire.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} baseX - The X coordinate of the pantograph base.
+ * @param {number} roofY - The Y coordinate of the train's roof.
+ * @param {number} headY - The Y coordinate of the collector head.
+ */
 function drawPantograph(ctx, baseX, roofY, headY) {
   const half = 26
   ctx.save()
@@ -287,6 +328,15 @@ function drawPantograph(ctx, baseX, roofY, headY) {
   ctx.restore()
 }
 
+/**
+ * Draws an electrical arc representing a spark when contact with the wire is lost.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} x - The X coordinate of the arc.
+ * @param {number} headY - The Y coordinate of the collector head (arc start).
+ * @param {number} wireY - The Y coordinate of the wire (arc end).
+ * @param {boolean} reduced - Reduced motion flag (removes jitter from the arc if true).
+ */
 function drawArc(ctx, x, headY, wireY, reduced) {
   ctx.save()
   ctx.strokeStyle = ARC
@@ -308,6 +358,18 @@ function drawArc(ctx, x, headY, wireY, reduced) {
 
 // ---------------- physics-proof overlays ----------------
 
+/**
+ * Draws a vertical arrow representing a force vector.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} x - The X coordinate of the arrow.
+ * @param {number} yFrom - The starting Y coordinate (base of the arrow).
+ * @param {number} len - The length of the arrow in pixels.
+ * @param {boolean} up - True if the arrow points upward, false if downward.
+ * @param {string} color - The color of the arrow.
+ * @param {string} name - The label text for the force name.
+ * @param {string} value - The text representing the force value.
+ */
 function vArrow(ctx, x, yFrom, len, up, color, name, value) {
   const tip = up ? yFrom - len : yFrom + len
   const dir = up ? -1 : 1
@@ -333,6 +395,18 @@ function vArrow(ctx, x, yFrom, len, up, color, name, value) {
 }
 
 // Free-body force arrows at the collector head, scaled to real newtons.
+/**
+ * Draws a set of free-body force arrows applied to the collector head.
+ * Arrows are scaled to represent real newtons visually.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} cx - The X coordinate of the collector head.
+ * @param {number} headY - The Y coordinate of the collector head.
+ * @param {Object} sys - The system state (passive or aeropinn).
+ * @param {Object} frame - The telemetry frame data.
+ * @param {boolean} isAero - True if rendering the AeroPINN lane.
+ * @param {boolean} lost - True if contact with the wire is currently lost.
+ */
 function drawForceArrows(ctx, cx, headY, sys, frame, isAero, lost) {
   const len = (n) => Math.min(Math.abs(n) * PX_PER_N, ARROW_MAX_PX)
   const P = lost ? 0 : (sys.contact_force ?? 0)
@@ -351,6 +425,18 @@ function drawForceArrows(ctx, cx, headY, sys, frame, isAero, lost) {
 
 // Live contact law including the coupled model's relative-velocity damping.
 // Right-aligned to end clear of the top-right PHYSICS toggle (and the train).
+/**
+ * Renders an equation strip displaying the real-time contact law calculation,
+ * including elastic and damping force components.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} W - Canvas width.
+ * @param {number} y0 - The top Y coordinate of the lane.
+ * @param {number} H - Height of the lane.
+ * @param {Object} sys - The system state (passive or aeropinn).
+ * @param {Object} frame - The telemetry frame data.
+ * @param {boolean} lost - True if contact with the wire is currently lost.
+ */
 function drawEquationStrip(ctx, W, y0, H, sys, frame, lost) {
   const z1 = sys.head_mm ?? 0
   const yw = sys.wire_mm ?? frame.wire_mm ?? 0
@@ -395,6 +481,14 @@ function drawEquationStrip(ctx, W, y0, H, sys, frame, lost) {
 }
 
 // To-scale span dimension between two poles (horizontal is genuinely 1:1).
+/**
+ * Draws a dimension line to show the scale of a single wire span (e.g., 60m).
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} W - Canvas width.
+ * @param {number} H - Canvas height.
+ * @param {number} worldX - The scroll offset in pixels.
+ */
 function drawSpanDimension(ctx, W, H, worldX) {
   const scroll = worldX % SPAN_PX
   // first pole comfortably right of the trains
@@ -417,6 +511,15 @@ function drawSpanDimension(ctx, W, H, worldX) {
 }
 
 // Provenance footer: what model produced this picture.
+/**
+ * Displays a footer indicating the underlying physics model specifications
+ * driving the simulation view.
+ *
+ * @param {CanvasRenderingContext2D} ctx - The 2D rendering context.
+ * @param {number} W - Canvas width.
+ * @param {number} H - Canvas height.
+ * @param {Object} f - The telemetry frame data.
+ */
 function drawModelCard(ctx, W, H, f) {
   const txt =
     `EN 50318 two-mass model  ·  k_c = 50 kN/m  ·  F₀ = ${(f.f0_N ?? 0).toFixed(0)} N  ·  ` +

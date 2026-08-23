@@ -25,6 +25,12 @@ from backend.sim.parameters import BeyondEnvelope
 
 
 class PINNMPCController:
+    """PINN-MPC controller loop that wraps around the PINN predictor.
+
+    This controller predicts contact forces for a set of candidate counter-forces
+    over a receding horizon, then selects the one that keeps the predicted contact
+    force closest to the setpoint while minimizing control effort and rate penalties.
+    """
     def __init__(
         self,
         predictor: PINNPredictor,
@@ -40,6 +46,25 @@ class PINNMPCController:
         candidate_force_fn=None,
         force_resolution: float = 0.10,
     ):
+        """Initializes the PINNMPCController.
+
+        Args:
+            predictor (PINNPredictor): The physics-informed neural network predictor.
+            dist (Disturbance): The environment disturbance model.
+            speed_ms (float): The train speed in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+            setpoint (float, optional): Target contact force in Newtons. Defaults to 115.0.
+            f_max (float, optional): Maximum control force magnitude in Newtons. Defaults to 90.0.
+            n_candidates (int, optional): Number of candidate forces to evaluate. Defaults to 21.
+            control_period (float, optional): Time between control updates in seconds. Defaults to 4.0e-3.
+            w_effort (float, optional): Weight for the control effort penalty. Defaults to 1.0e-4.
+            w_rate (float, optional): Weight for the control rate penalty. Defaults to 5.0e-4.
+            candidate_force_fn (callable, optional): Optional function to modify candidate forces. Defaults to None.
+            force_resolution (float, optional): Minimum force difference considered significant. Defaults to 0.10.
+
+        Raises:
+            ValueError: If force_resolution is not positive.
+        """
         self.pred = predictor
         self.dist = dist
         self.speed_ms = speed_ms
@@ -63,6 +88,19 @@ class PINNMPCController:
         self._deadline_misses = deque(maxlen=500)
 
     def __call__(self, t: float, state, force: float) -> float:
+        """Evaluates the MPC logic and computes the optimal control force.
+
+        Re-optimizes only when the control period has elapsed; otherwise, it holds
+        and returns the previous control force.
+
+        Args:
+            t (float): The current simulation time in seconds.
+            state (np.ndarray): The current state vector.
+            force (float): The current measured or estimated contact force.
+
+        Returns:
+            float: The optimal control force to apply.
+        """
         # Receding-horizon: only re-optimise every control_period; hold otherwise.
         if not self._scheduler.due(t):
             return self._held
@@ -97,6 +135,12 @@ class PINNMPCController:
         return best
 
     def timing_metrics(self) -> dict:
+        """Calculates timing and latency metrics for the control loop.
+
+        Returns:
+            dict: A dictionary containing latency percentiles, deadline miss rate,
+                and the total number of samples.
+        """
         if not self._latencies:
             return {
                 "latency_p95_ms": 0.0,
@@ -113,5 +157,6 @@ class PINNMPCController:
         }
 
     def reset_timing(self) -> None:
+        """Resets the timing and latency metrics."""
         self._latencies.clear()
         self._deadline_misses.clear()

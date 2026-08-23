@@ -25,6 +25,18 @@ from .parameters import DistributedCatenaryParams
 
 @dataclass(frozen=True)
 class RealtimeCatenaryModel:
+    """Pre-computed modal parameters for a real-time catenary simulation.
+    
+    Attributes:
+        params: The distributed catenary physical parameters.
+        modes: Matrix of mass-normalized eigenvectors for the wire structure.
+        mass_diagonal: The diagonal of the assembled mass matrix.
+        omega_squared: Array of squared angular frequencies for the retained modes.
+        modal_damping: Array of modal damping coefficients.
+        dropper_vectors: Transformation matrix to calculate dropper extensions from physical DOFs.
+        contact_wave_speed: Transverse wave speed along the contact wire (m/s).
+        messenger_wave_speed: Transverse wave speed along the messenger wire (m/s).
+    """
     params: DistributedCatenaryParams
     modes: np.ndarray
     mass_diagonal: np.ndarray
@@ -36,19 +48,32 @@ class RealtimeCatenaryModel:
 
     @property
     def n_nodes(self) -> int:
+        """int: The number of nodes per wire in the finite element mesh."""
         return self.params.n_nodes
 
     @property
     def ndof(self) -> int:
+        """int: Total number of physical degrees of freedom (2 * n_nodes)."""
         return 2 * self.n_nodes
 
     @property
     def mode_count(self) -> int:
+        """int: The number of modes retained in the modal basis."""
         return self.modes.shape[1]
 
 
 @dataclass(frozen=True)
 class CatenaryPreview:
+    """State preview resulting from a single integration step for implicit iteration.
+    
+    Attributes:
+        displacement: Modal displacement vector at the end of the step.
+        velocity: Modal velocity vector at the end of the step.
+        acceleration: Modal acceleration vector at the end of the step.
+        position: Longitudinal position of the pantograph at the end of the step.
+        contact_displacement: Physical upward displacement of the contact point.
+        contact_velocity: Physical upward velocity of the contact point.
+    """
     displacement: np.ndarray
     velocity: np.ndarray
     acceleration: np.ndarray
@@ -62,6 +87,16 @@ def build_realtime_model(
     panto: PantographParams | None = None,
     mode_count: int = 36,
 ) -> RealtimeCatenaryModel:
+    """Assembles the finite element system and extracts a truncated modal basis.
+    
+    Args:
+        params: Distributed catenary parameters. If None, defaults to 8 spans.
+        panto: Pantograph parameters (optional, may affect assembled mass).
+        mode_count: Maximum number of lowest-frequency modes to retain.
+        
+    Returns:
+        A frozen RealtimeCatenaryModel containing the extracted modal parameters.
+    """
     # Eight spans keep boundaries several wave-flight times from the moving contact
     # while remaining cheap enough for three independently coupled live lanes.
     params = params or replace(DistributedCatenaryParams(), n_spans=8)
@@ -98,7 +133,21 @@ def build_realtime_model(
 
 
 class RealtimeCatenary:
-    """Independent dynamic wire state for one pantograph/control lane."""
+    """Independent dynamic wire state for one pantograph/control lane.
+    
+    Attributes:
+        model: The underlying pre-computed real-time model.
+        dt: Time step for integration (seconds).
+        reference_force: The baseline steady contact force (N).
+        displacement: Current modal displacement vector.
+        velocity: Current modal velocity vector.
+        acceleration: Current modal acceleration vector.
+        position: Current longitudinal position of the pantograph.
+        distance_travelled: Total distance the pantograph has travelled.
+        last_contact_force: Most recent contact force applied.
+        last_coupling_residual: Residual error in force coupling.
+        shift_count: Number of times the spatial window has been shifted.
+    """
 
     def __init__(
         self,
@@ -106,6 +155,16 @@ class RealtimeCatenary:
         dt: float,
         reference_force: float = 115.0,
     ):
+        """Initializes the real-time catenary dynamic state.
+        
+        Args:
+            model: The base physical and modal properties.
+            dt: The integration time step in seconds. Must be positive.
+            reference_force: Steady uplift preload force in Newtons.
+            
+        Raises:
+            ValueError: If dt is not positive.
+        """
         if dt <= 0.0:
             raise ValueError("dt must be positive")
         self.model = model
@@ -121,6 +180,14 @@ class RealtimeCatenary:
         self.shift_count = 0
 
     def _weights(self, position: float | None = None):
+        """Calculates element interpolation weights for a given position.
+        
+        Args:
+            position: The longitudinal coordinate. Defaults to current position.
+            
+        Returns:
+            A tuple containing node indices and the interpolation weight array.
+        """
         return interpolation_weights(
             self.position if position is None else position,
             self.model.params.dx,
@@ -128,7 +195,14 @@ class RealtimeCatenary:
         )
 
     def reproject_model(self, model: RealtimeCatenaryModel) -> None:
-        """Preserve physical wire state while tension changes the modal basis."""
+        """Preserves physical wire state while tension changes the modal basis.
+        
+        Args:
+            model: The new RealtimeCatenaryModel to project the physical state onto.
+            
+        Raises:
+            ValueError: If the new model does not match the mesh size of the current model.
+        """
         if model.ndof != self.model.ndof:
             raise ValueError("replacement catenary model must keep the same mesh")
         physical_u = self.model.modes @ self.displacement
@@ -145,15 +219,35 @@ class RealtimeCatenary:
         )
 
     def contact_displacement(self) -> float:
+        """Calculates the physical displacement of the contact wire at the current position.
+        
+        Returns:
+            The displacement in meters.
+        """
         return float(self._contact_shape(self.position) @ self.displacement)
 
     def contact_velocity(self) -> float:
+        """Calculates the physical velocity of the contact wire at the current position.
+        
+        Returns:
+            The velocity in m/s.
+        """
         return float(self._contact_shape(self.position) @ self.velocity)
 
     def contact_acceleration(self) -> float:
+        """Calculates the physical acceleration of the contact wire at the current position.
+        
+        Returns:
+            The acceleration in m/s^2.
+        """
         return float(self._contact_shape(self.position) @ self.acceleration)
 
     def initialize_static(self, contact_force: float) -> None:
+        """Initializes the modal state to the static equilibrium under a given contact force.
+        
+        Args:
+            contact_force: The constant uplift force applied to the contact wire (N).
+        """
         load = self._modal_contact_load(
             float(contact_force) - self.reference_force, self.position
         )
@@ -165,17 +259,49 @@ class RealtimeCatenary:
         self.last_contact_force = float(max(contact_force, 0.0))
 
     def static_compliance(self) -> float:
+        """Calculates the static vertical compliance of the wire at the current position.
+        
+        Returns:
+            The compliance (displacement per unit force) in m/N.
+        """
         shape = self._contact_shape(self.position)
         return float(np.sum(shape * shape / self.model.omega_squared))
 
     def _contact_shape(self, position: float) -> np.ndarray:
+        """Calculates the modal shape vector interpolated at a specific longitudinal position.
+        
+        Args:
+            position: The longitudinal coordinate along the span (meters).
+            
+        Returns:
+            The interpolated modal shape vector.
+        """
         nodes, weights = self._weights(position)
         return weights @ self.model.modes[nodes]
 
     def _modal_contact_load(self, force: float, position: float) -> np.ndarray:
+        """Projects a physical point force at a given position into modal coordinates.
+        
+        Args:
+            force: The applied physical upward force (N).
+            position: The longitudinal coordinate of the applied force (meters).
+            
+        Returns:
+            The modal load vector.
+        """
         return float(force) * self._contact_shape(position)
 
     def _modal_acceleration(self, displacement, velocity, load):
+        """Calculates modal acceleration given the system state and applied modal load.
+        
+        Args:
+            displacement: Modal displacement vector.
+            velocity: Modal velocity vector.
+            load: Modal load vector.
+            
+        Returns:
+            The resulting modal acceleration vector.
+        """
         return (
             load
             - self.model.modal_damping * velocity
@@ -183,6 +309,12 @@ class RealtimeCatenary:
         )
 
     def _shift_window_if_needed(self) -> None:
+        """Shifts the spatial coordinate window backwards to prevent periodic wrap-around.
+        
+        If the current position exceeds 4.5 span lengths, the underlying physical
+        degrees of freedom are translated backwards by one full span length, and the
+        modal state is re-projected accordingly.
+        """
         p = self.model.params
         upper = 4.5 * p.span_length
         if self.position < upper:
@@ -206,7 +338,17 @@ class RealtimeCatenary:
         self.shift_count += 1
 
     def preview(self, contact_force: float, speed_ms: float) -> CatenaryPreview:
-        """Predict one step without mutation for implicit contact iteration."""
+        """Predicts one step without mutation for implicit contact iteration.
+        
+        Uses the average-acceleration Newmark method for unconditionally stable integration.
+        
+        Args:
+            contact_force: The upward force applied to the contact wire (N).
+            speed_ms: The speed of the pantograph along the wire (m/s).
+            
+        Returns:
+            A CatenaryPreview containing the predicted modal and physical states.
+        """
         midpoint = self.position + 0.5 * speed_ms * self.dt
         # Coordinates are perturbations about the static 115 N uplifted state.
         # Negative modal load means less uplift than that preload, not a wire that
@@ -258,7 +400,23 @@ class RealtimeCatenary:
         speed_ms: float,
         interval: float,
     ):
-        """Vectorized modal step used by catenary-aware MPC rollouts."""
+        """Vectorized modal step used by catenary-aware MPC rollouts.
+        
+        Allows computing multiple candidate futures simultaneously in a vectorized manner.
+        
+        Args:
+            displacement: Current modal displacement array.
+            velocity: Current modal velocity array.
+            acceleration: Current modal acceleration array.
+            contact_forces: Array of candidate contact forces to apply (N).
+            position: Current longitudinal position (meters).
+            speed_ms: The speed of the pantograph (m/s).
+            interval: The time step interval (seconds).
+            
+        Returns:
+            A tuple of (next_displacement, next_velocity, next_acceleration,
+            next_position, contact_displacement, contact_velocity, contact_acceleration).
+        """
         q = np.asarray(displacement, dtype=float)
         v = np.asarray(velocity, dtype=float)
         a = np.asarray(acceleration, dtype=float)
@@ -294,6 +452,16 @@ class RealtimeCatenary:
         )
 
     def commit(self, preview: CatenaryPreview, contact_force: float, speed_ms: float):
+        """Commits a previewed state to become the current state of the wire.
+        
+        Args:
+            preview: The previewed state to commit.
+            contact_force: The contact force used to generate this preview.
+            speed_ms: The travel speed used to generate this preview.
+            
+        Returns:
+            The resulting physical upward displacement of the contact point.
+        """
         self.displacement = preview.displacement
         self.velocity = preview.velocity
         self.acceleration = preview.acceleration
@@ -304,10 +472,24 @@ class RealtimeCatenary:
         return self.contact_displacement()
 
     def step(self, contact_force: float, speed_ms: float) -> float:
-        """Advance one step; use preview/commit for coupled plant integration."""
+        """Advances one integration step; use preview/commit for coupled plant integration.
+        
+        Args:
+            contact_force: Applied upward force (N).
+            speed_ms: Travel speed (m/s).
+            
+        Returns:
+            The resulting physical upward displacement of the contact point.
+        """
         return self.commit(self.preview(contact_force, speed_ms), contact_force, speed_ms)
 
     def telemetry(self) -> dict:
+        """Gathers runtime diagnostics for this catenary lane.
+        
+        Returns:
+            A dictionary containing structural telemetry metrics like peak deflection,
+            contact wire ripple, and slack dropper risks.
+        """
         n = self.model.n_nodes
         p = self.model.params
         physical = self.model.modes @ self.displacement
@@ -330,9 +512,26 @@ class RealtimeCatenary:
 
 
 class CoupledWireEnvironment:
-    """Plant environment: shared exogenous field plus lane-specific wire motion."""
+    """Plant environment: shared exogenous field plus lane-specific wire motion.
+    
+    Provides an interface matching the base kinematic environment but includes
+    the dynamic "ripple" (deflection and velocity) of the real-time catenary wire.
+    
+    Attributes:
+        base: The base steady-state kinematic environment.
+        wire: The dynamic RealtimeCatenary instance for this lane.
+        cat: The catenary parameters (from base environment).
+        ripple_override: Optional override for contact wire displacement (meters).
+        ripple_velocity_override: Optional override for contact wire velocity (m/s).
+    """
 
     def __init__(self, base, wire: RealtimeCatenary):
+        """Initializes the coupled wire environment.
+        
+        Args:
+            base: The static or kinematic environment providing the steady baseline.
+            wire: The dynamic catenary model calculating the interactive ripple.
+        """
         self.base = base
         self.wire = wire
         self.cat = base.cat
@@ -340,6 +539,16 @@ class CoupledWireEnvironment:
         self.ripple_velocity_override: float | None = None
 
     def y_wire(self, t, speed_ms: float, beyond: BeyondEnvelope):
+        """Calculates the total vertical position of the contact wire.
+        
+        Args:
+            t: Current time (seconds).
+            speed_ms: Travel speed (m/s).
+            beyond: Envelope violation flag/state.
+            
+        Returns:
+            The vertical position of the wire (meters).
+        """
         ripple = (
             self.wire.contact_displacement()
             if self.ripple_override is None
@@ -348,9 +557,28 @@ class CoupledWireEnvironment:
         return self.base.y_wire(t, speed_ms, beyond) + ripple
 
     def aero_force(self, speed_ms: float, beyond: BeyondEnvelope) -> float:
+        """Calculates aerodynamic uplift force on the pantograph.
+        
+        Args:
+            speed_ms: Travel speed (m/s).
+            beyond: Envelope violation flag/state.
+            
+        Returns:
+            The aerodynamic force (N).
+        """
         return self.base.aero_force(speed_ms, beyond)
 
     def wire_velocity(self, t, speed_ms: float, beyond: BeyondEnvelope) -> float:
+        """Calculates the total vertical velocity of the contact wire.
+        
+        Args:
+            t: Current time (seconds).
+            speed_ms: Travel speed (m/s).
+            beyond: Envelope violation flag/state.
+            
+        Returns:
+            The vertical velocity of the wire (m/s).
+        """
         base_velocity = self.base.wire_velocity(t, speed_ms, beyond)
         ripple_velocity = (
             self.wire.contact_velocity()
@@ -368,6 +596,19 @@ class CoupledWireEnvironment:
         head_velocity: float,
         contact_stiffness: float,
     ) -> float:
+        """Calculates the instantaneous interaction force between pantograph and wire.
+        
+        Args:
+            t: Current time (seconds).
+            speed_ms: Travel speed (m/s).
+            beyond: Envelope violation flag/state.
+            head_position: Vertical position of the pantograph head (meters).
+            head_velocity: Vertical velocity of the pantograph head (m/s).
+            contact_stiffness: Stiffness of the contact strip (N/m).
+            
+        Returns:
+            The interaction force (N), guaranteed non-negative (loss of contact = 0).
+        """
         base_position, base_velocity = self.base.wire_kinematics(
             t, speed_ms, beyond
         )

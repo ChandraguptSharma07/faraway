@@ -15,6 +15,14 @@ from .solver import simulate_distributed
 
 @dataclass(frozen=True)
 class ConvergenceRow:
+    """Results from a single mesh resolution in a convergence study.
+
+    Attributes:
+        elements_per_span (int): The number of finite elements per span.
+        mean_force (float): The mean contact force over the simulation (in N).
+        force_std (float): The standard deviation of the contact force (in N).
+        loss_fraction (float): The fraction of the simulation duration where contact was lost.
+    """
     elements_per_span: int
     mean_force: float
     force_std: float
@@ -23,7 +31,15 @@ class ConvergenceRow:
 
 @dataclass(frozen=True)
 class ModelComparison:
-    """Side-by-side statistics; disagreement is diagnostic, not a pass/fail score."""
+    """Side-by-side statistics; disagreement is diagnostic, not a pass/fail score.
+
+    Attributes:
+        legacy_mean_force (float): Mean contact force from the legacy simulation (N).
+        legacy_force_std (float): Standard deviation of contact force from legacy simulation (N).
+        distributed_mean_force (float): Mean contact force from the distributed simulation (N).
+        distributed_force_std (float): Standard deviation of contact force from distributed simulation (N).
+        distributed_loss_percent (float): Percentage of steady-state time where contact was lost in the distributed model.
+    """
 
     legacy_mean_force: float
     legacy_force_std: float
@@ -33,6 +49,14 @@ class ModelComparison:
 
 
 def theoretical_wave_speeds(params: DistributedCatenaryParams | None = None) -> dict[str, float]:
+    """Calculate the theoretical transverse wave speeds of the contact and messenger wires.
+
+    Args:
+        params (DistributedCatenaryParams | None, optional): Physical catenary parameters. Defaults to None.
+
+    Returns:
+        dict[str, float]: A dictionary containing the wave speeds (in m/s) with keys "contact_wire" and "messenger_wire".
+    """
     params = params or DistributedCatenaryParams()
     return {
         "contact_wire": float(np.sqrt(params.contact_tension / params.contact_mass_per_m)),
@@ -47,6 +71,17 @@ def convergence_study(
     *,
     n_spans: int = 3,
 ) -> tuple[ConvergenceRow, ...]:
+    """Run simulations across multiple mesh resolutions to check for statistical convergence.
+
+    Args:
+        speed_ms (float): Train travel speed in meters per second.
+        duration (float, optional): Total simulation time in seconds. Defaults to 0.25.
+        meshes (tuple[int, ...], optional): A tuple specifying the number of elements per span to test. Defaults to (4, 6, 8).
+        n_spans (int, optional): The total number of spans in the catenary model. Defaults to 3.
+
+    Returns:
+        tuple[ConvergenceRow, ...]: A tuple of results for each requested mesh resolution.
+    """
     rows = []
     for elements in meshes:
         params = replace(
@@ -79,7 +114,16 @@ def compare_with_legacy(
     *,
     params: DistributedCatenaryParams | None = None,
 ) -> ModelComparison:
-    """Expose model-form differences without treating the old calibration as truth."""
+    """Expose model-form differences without treating the old calibration as truth.
+
+    Args:
+        speed_ms (float): Train travel speed in meters per second.
+        duration (float, optional): Total simulation time in seconds. Defaults to 0.5.
+        params (DistributedCatenaryParams | None, optional): Physical catenary parameters. Defaults to None.
+
+    Returns:
+        ModelComparison: An object containing force statistics for both models.
+    """
     distributed = simulate_distributed(
         speed_ms,
         duration,

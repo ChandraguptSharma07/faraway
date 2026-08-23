@@ -10,6 +10,12 @@ from backend.sim.solver import deriv
 
 
 class PantographEKF:
+    """Extended Kalman Filter (EKF) for a two-mass pantograph model.
+
+    This observer estimates the state of the pantograph based on position
+    and acceleration measurements. It uses a reduced 4-state model,
+    intentionally omitting flexible wire modes.
+    """
     def __init__(
         self,
         initial_state: np.ndarray,
@@ -18,6 +24,15 @@ class PantographEKF:
         panto: PantographParams,
         sensor_params: SensorParams,
     ):
+        """Initializes the Extended Kalman Filter.
+
+        Args:
+            initial_state (np.ndarray): The initial state estimate of the pantograph.
+            dt (float): The base time step for predictions in seconds.
+            dist (Disturbance): The environment disturbance model.
+            panto (PantographParams): The nominal pantograph parameters.
+            sensor_params (SensorParams): The sensor noise and configuration parameters.
+        """
         self.state = np.asarray(initial_state, dtype=float).copy()
         self.dt = dt
         self.dist = dist
@@ -44,12 +59,34 @@ class PantographEKF:
         self.last_head_acceleration = 0.0
 
     def _dynamics(self, state, t, speed_ms, beyond, actuator_force):
+        """Computes the continuous-time dynamics derivative.
+
+        Args:
+            state (np.ndarray): The current state vector.
+            t (float): The current simulation time in seconds.
+            speed_ms (float): The train speed in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+            actuator_force (float): The applied actuator force in Newtons.
+
+        Returns:
+            np.ndarray: The state derivative.
+        """
         return deriv(
             state, t, speed_ms, self.dist, self.panto, beyond, actuator_force
         )[0]
 
     @staticmethod
     def _jacobian(fn, x: np.ndarray, eps: np.ndarray) -> np.ndarray:
+        """Computes the Jacobian matrix numerically using finite differences.
+
+        Args:
+            fn (callable): The vector-valued function to differentiate.
+            x (np.ndarray): The point at which to evaluate the Jacobian.
+            eps (np.ndarray): The step sizes for finite differences.
+
+        Returns:
+            np.ndarray: The numerically evaluated Jacobian matrix.
+        """
         base = fn(x)
         jac = np.empty((len(base), len(x)))
         for i, step in enumerate(eps):
@@ -59,6 +96,14 @@ class PantographEKF:
         return jac
 
     def predict(self, t: float, speed_ms: float, beyond: BeyondEnvelope, actuator_force: float):
+        """Advances the state estimate forward in time by one prediction step.
+
+        Args:
+            t (float): The current simulation time in seconds.
+            speed_ms (float): The train speed in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+            actuator_force (float): The applied actuator force in Newtons.
+        """
         x = self.state
         fn = lambda s: self._dynamics(s, t, speed_ms, beyond, actuator_force)
         f = fn(x)
@@ -70,14 +115,46 @@ class PantographEKF:
         self._check_finite()
 
     def _acceleration_measurement(self, state, t, speed_ms, beyond, actuator_force):
+        """Computes the expected acceleration measurement from the given state.
+
+        Args:
+            state (np.ndarray): The state vector.
+            t (float): The measurement time in seconds.
+            speed_ms (float): The train speed in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+            actuator_force (float): The applied actuator force in Newtons.
+
+        Returns:
+            np.ndarray: The expected acceleration vector.
+        """
         dx = self._dynamics(state, t, speed_ms, beyond, actuator_force)
         return np.array([dx[1], dx[3]])
 
     @staticmethod
     def _position_measurement(state):
+        """Computes the expected position measurement from the given state.
+
+        Args:
+            state (np.ndarray): The state vector.
+
+        Returns:
+            np.ndarray: The expected position measurement vector.
+        """
         return np.array([state[2], state[0] - state[2]])
 
     def _update_group(self, measured, fn, noise, gate: float) -> tuple[bool, float]:
+        """Performs an EKF measurement update step for a specific group of sensors.
+
+        Args:
+            measured (np.ndarray): The actual measurement values.
+            fn (callable): A function returning the expected measurements for a state.
+            noise (np.ndarray): The measurement noise covariance matrix.
+            gate (float): The threshold for the Normalized Innovation Squared (NIS).
+                          Updates exceeding this gate are rejected as outliers.
+
+        Returns:
+            tuple: A boolean indicating whether the update was accepted, and the NIS value.
+        """
         expected = fn(self.state)
         h = self._jacobian(fn, self.state, np.array([1e-6, 1e-4, 1e-6, 1e-4]))
         innovation = measured - expected
@@ -98,6 +175,13 @@ class PantographEKF:
         return True, nis
 
     def update(self, packet: SensorPacket, speed_ms: float, beyond: BeyondEnvelope):
+        """Processes a new sensor packet and updates the state estimate.
+
+        Args:
+            packet (SensorPacket): The incoming sensor measurements.
+            speed_ms (float): The train speed in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+        """
         self.last_head_acceleration = packet.head_acceleration
         position = np.array([
             packet.frame_position,
@@ -137,6 +221,14 @@ class PantographEKF:
         self._check_finite()
 
     def contact_force_estimate(self, aerodynamic_force: float) -> float:
+        """Estimates the contact force between the pantograph and the wire.
+
+        Args:
+            aerodynamic_force (float): The aerodynamic force on the pantograph in Newtons.
+
+        Returns:
+            float: The estimated contact force in Newtons.
+        """
         z1, z1d, z2, z2d = self.state
         force = (
             aerodynamic_force
@@ -147,6 +239,11 @@ class PantographEKF:
         return float(np.clip(force, 0.0, 500.0))
 
     def _check_finite(self):
+        """Checks if the estimator state is finite and within reasonable bounds.
+
+        Marks the estimator as diverged if the state or covariance contains non-finite
+        values, or if they grow too large.
+        """
         if (
             not np.all(np.isfinite(self.state))
             or not np.all(np.isfinite(self.covariance))
@@ -156,6 +253,15 @@ class PantographEKF:
             self._diverged = True
 
     def health(self, t: float) -> tuple[bool, str]:
+        """Evaluates the health and reliability of the estimator.
+
+        Args:
+            t (float): The current simulation time in seconds.
+
+        Returns:
+            tuple: A boolean indicating whether the estimator is healthy,
+                   and a string describing the health status reason.
+        """
         if self._diverged:
             return False, "ESTIMATOR_DIVERGED"
         if self.packet_count < 3:
@@ -166,6 +272,14 @@ class PantographEKF:
         return True, "HEALTHY"
 
     def telemetry(self, t: float) -> dict:
+        """Collects telemetry data on the estimator's performance and status.
+
+        Args:
+            t (float): The current simulation time in seconds.
+
+        Returns:
+            dict: A dictionary of telemetry metrics.
+        """
         healthy, reason = self.health(t)
         age = None if self.last_packet_at is None else max(0.0, t - self.last_packet_at)
         return {

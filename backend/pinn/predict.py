@@ -32,6 +32,17 @@ MODEL_PATH = Path(__file__).with_name("pinn_model.pt")
 
 
 def load_model(path: Path = MODEL_PATH) -> PantoPINN:
+    """Loads a trained Physics-Informed Neural Network (PINN) model from disk.
+
+    Args:
+        path (Path, optional): Path to the saved model checkpoint. Defaults to MODEL_PATH.
+
+    Returns:
+        PantoPINN: The loaded and initialized PINN model in evaluation mode.
+
+    Raises:
+        RuntimeError: If the loaded checkpoint does not use articulated-frame actuation.
+    """
     ckpt = torch.load(path, weights_only=False)
     if ckpt.get("actuation") != "articulated_frame":
         raise RuntimeError("PINN checkpoint does not use articulated-frame actuation")
@@ -43,7 +54,18 @@ def load_model(path: Path = MODEL_PATH) -> PantoPINN:
 
 
 class PINNPredictor:
+    """Fast contact-force and state predictor using a Physics-Informed Neural Network (PINN).
+
+    This class wraps a trained PINN model to provide high-speed batched predictions
+    of pantograph-catenary interaction forces and next-horizon states.
+    """
     def __init__(self, model: PantoPINN | None = None, panto: PantographParams | None = None):
+        """Initializes the PINNPredictor.
+
+        Args:
+            model (PantoPINN | None, optional): A trained PINN model. If None, loads the default model.
+            panto (PantographParams | None, optional): Pantograph parameters. If None, uses defaults.
+        """
         self.model = model or load_model()
         self.panto = panto or PantographParams()
         self.H = self.model.cfg.horizon
@@ -55,10 +77,20 @@ class PINNPredictor:
     def predict_force_candidates(
         self, state4, f_controls, fa: float, wirefeat
     ) -> np.ndarray:
-        """Predicted contact force at tau=H for each candidate control force.
+        """Predicts the contact force at tau=H for each candidate control force.
 
-        state4 = (z1,z1d,z2,z2d); f_controls = 1D array; wirefeat = (y0,y0d,y0dd).
-        Single batched forward pass.
+        Performs a single batched forward pass to evaluate multiple control candidates
+        from a shared initial state.
+
+        Args:
+            state4 (tuple[float, float, float, float]): The current state tuple (z1, z1d, z2, z2d).
+            f_controls (ArrayLike): A 1D array or list of candidate control forces.
+            fa (float): The aerodynamic force applied to the pantograph.
+            wirefeat (tuple[float, float, float]): Wire features tuple (y0, y0d, y0dd) representing
+                the wire height, velocity, and acceleration at the contact point.
+
+        Returns:
+            np.ndarray: A 1D numpy array of predicted contact forces corresponding to each control candidate.
         """
         f_controls = np.atleast_1d(np.asarray(f_controls, dtype=np.float32))
         b = len(f_controls)
@@ -73,7 +105,19 @@ class PINNPredictor:
         return f.squeeze(-1).numpy()
 
     def predict_next_state(self, state4, f_control: float, fa: float, wirefeat):
-        """Advance one horizon H; returns (z1,z1d,z2,z2d) via autograd velocities."""
+        """Advances the state by one horizon H.
+
+        Args:
+            state4 (tuple[float, float, float, float]): The current state tuple (z1, z1d, z2, z2d).
+            f_control (float): The applied control force.
+            fa (float): The aerodynamic force applied to the pantograph.
+            wirefeat (tuple[float, float, float]): Wire features tuple (y0, y0d, y0dd) representing
+                the wire height, velocity, and acceleration.
+
+        Returns:
+            tuple[float, float, float, float]: The predicted next state tuple (z1, z1d, z2, z2d),
+                where velocities are obtained via autograd of the trajectory.
+        """
         y0, y0d, y0dd = wirefeat
         ctx = torch.tensor(
             [[state4[0], state4[1], state4[2], state4[3], fa, f_control, y0, y0d, y0dd]],
@@ -90,11 +134,25 @@ class PINNPredictor:
 
     @torch.no_grad()
     def predict_state_candidates(self, states4, f_controls, fa: float, wirefeat):
-        """Batch one-horizon state and contact-force predictions.
+        """Batches one-horizon state and contact-force predictions for multiple states and controls.
 
-        Unlike predict_force_candidates(), every candidate may start from a different
-        state. This supports chained actuator-aware MPC rollouts in one network pass
-        per horizon step.
+        Unlike predict_force_candidates(), every candidate may start from a different state.
+        This supports chained actuator-aware MPC rollouts in one network pass per horizon step.
+
+        Args:
+            states4 (ArrayLike): An array of shape (n_candidates, 4) representing the initial states.
+            f_controls (ArrayLike): A 1D array of candidate control forces.
+            fa (float): The aerodynamic force applied to the pantograph.
+            wirefeat (tuple[float, float, float]): Wire features tuple (y0, y0d, y0dd) representing
+                the wire height, velocity, and acceleration.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray]: A tuple containing:
+                - next_states: A numpy array of shape (n_candidates, 4) with the predicted next states.
+                - force: A 1D numpy array of predicted contact forces.
+
+        Raises:
+            ValueError: If states4 does not have shape (n_candidates, 4).
         """
         states = np.asarray(states4, dtype=np.float32)
         if states.ndim == 1:
@@ -141,7 +199,19 @@ class PINNPredictor:
         iters: int = 250,
         deadline_ms: float | None = None,
     ) -> dict:
-        """Distribution of warm inference latency; averages alone hide deadline misses."""
+        """Benchmarks the warm inference latency of the PINN predictor.
+        
+        Calculates the distribution of warm inference latency, as averages alone
+        hide deadline misses.
+        
+        Args:
+            n_candidates (int, optional): The number of control candidates to evaluate per batch. Defaults to 32.
+            iters (int, optional): The number of iterations to run the benchmark. Defaults to 250.
+            deadline_ms (float | None, optional): Optional deadline latency in milliseconds to calculate miss percentage. Defaults to None.
+            
+        Returns:
+            dict: A dictionary containing latency statistics including single and batch latency means, percentiles, max latency, and optionally deadline miss percentage.
+        """
         state4 = (0.05, 0.0, 0.04, 0.0)
         fcs = np.linspace(-80, 80, n_candidates).astype(np.float32)
         wf = (0.01, 0.1, 1.0)
@@ -182,13 +252,24 @@ def rollout_overlay(
     seed: int = 999,
     sample_dt: float = 2.0e-3,
 ):
-    """Credibility overlay: at each sampled instant the PINN predicts the contact
-    force one horizon H ahead from the (true) current state; we overlay that against
-    the classical solver's actual force at t+H.
+    """Generates a credibility overlay by rolling out the PINN predictions against a classical solver.
 
-    This is the PINN's job — a fast PREDICTOR — so H-ahead prediction tracking the
-    ground truth is the honest accuracy claim (a free-running surrogate is a different,
-    much harder claim that the stiff penalty contact makes ill-conditioned).
+    At each sampled instant, the PINN predicts the contact force one horizon H ahead
+    from the (true) current state. We overlay that against the classical solver's actual
+    force at t+H. This serves to validate the PINN's accuracy as a fast predictor tracking
+    the ground truth.
+
+    Args:
+        predictor (PINNPredictor): The initialized PINN predictor instance.
+        speed_kmh (float, optional): The train speed in km/h. Defaults to 300.0.
+        beyond (BeyondEnvelope | None, optional): Beyond-envelope disturbance parameters. Defaults to None.
+        duration (float, optional): Total simulation duration in seconds. Defaults to 2.0.
+        seed (int, optional): Random seed for the disturbance generation. Defaults to 999.
+        sample_dt (float, optional): Sampling time step for the overlay comparison. Defaults to 2.0e-3.
+
+    Returns:
+        dict: A dictionary containing arrays for times ('t'), predicted forces ('f_pinn'),
+            solver actual forces ('f_solver'), and error metrics ('rmse_N', 'speed_kmh', 'horizon_ms').
     """
     beyond = beyond or BeyondEnvelope()
     cat = CatenaryParams()

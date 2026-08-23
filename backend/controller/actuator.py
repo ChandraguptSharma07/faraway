@@ -23,6 +23,14 @@ import numpy as np
 
 @dataclass(frozen=True)
 class ActuatorParams:
+    """Parameters defining the physical characteristics of the force actuator.
+
+    Attributes:
+        response_time (float): The published response time of the proportional valve in seconds.
+        transport_delay (float): The digital transport and processing delay in seconds.
+        force_limit (float): The maximum theoretical force achievable by the cylinder in Newtons.
+        force_rate_limit (float): The maximum rate of change of force in Newtons per second.
+    """
     response_time: float = 40.0e-3
     transport_delay: float = 4.0e-3
     force_limit: float = 98.2
@@ -30,11 +38,21 @@ class ActuatorParams:
 
     @property
     def time_constant(self) -> float:
+        """Calculates the time constant based on a first-order response assumption.
+
+        Returns:
+            float: The time constant derived from the response time in seconds.
+        """
         # Conservative first-order interpretation of the published valve response.
         return self.response_time
 
     @property
     def response_hz(self) -> float:
+        """Calculates the corresponding frequency bandwidth of the actuator response.
+
+        Returns:
+            float: The actuator response frequency in Hertz.
+        """
         return 1.0 / (2.0 * np.pi * self.response_time)
 
 
@@ -58,9 +76,23 @@ ACTUATOR_BASELINE = {
 
 
 class ForceActuator:
-    """Transport delay + first-order force response + configured bounds."""
+    """Transport delay + first-order force response + configured bounds.
+
+    Simulates the physical behavior of the pneumatic force actuator, taking into
+    account actuation delays, response times, and force limits.
+    """
 
     def __init__(self, dt: float, params: ActuatorParams | None = None):
+        """Initializes the force actuator simulation.
+
+        Args:
+            dt (float): The simulation time step in seconds. Must be positive.
+            params (ActuatorParams | None, optional): Actuator configuration parameters.
+                If None, default ActuatorParams are used.
+
+        Raises:
+            ValueError: If dt is less than or equal to zero.
+        """
         if dt <= 0.0:
             raise ValueError("dt must be positive")
         self.dt = dt
@@ -71,6 +103,17 @@ class ForceActuator:
         self._queue = deque([0.0] * self._delay_steps)
 
     def step(self, command: float) -> float:
+        """Advances the actuator state by one time step with the given command.
+
+        Applies transport delay, rate limits, and magnitude limits to simulate the
+        physical actuator response, returning the actual force output.
+
+        Args:
+            command (float): The desired force command in Newtons.
+
+        Returns:
+            float: The actual applied force for this time step in Newtons.
+        """
         p = self.params
         self.command = float(np.clip(command, -p.force_limit, p.force_limit))
         if self._delay_steps:
@@ -88,7 +131,18 @@ class ForceActuator:
         return self.force
 
     def preview_candidates(self, commands: np.ndarray, horizon: float) -> np.ndarray:
-        """Approximate force available by the PINN horizon for candidate scoring."""
+        """Approximate force available by the PINN horizon for candidate scoring.
+
+        Evaluates an array of command candidates to determine the expected force
+        at the specified preview horizon, accounting for transport delay and first-order response.
+
+        Args:
+            commands (np.ndarray): An array of candidate force commands in Newtons.
+            horizon (float): The preview horizon time in seconds.
+
+        Returns:
+            np.ndarray: An array of expected forces corresponding to each candidate command.
+        """
         commands = np.clip(
             np.asarray(commands, dtype=np.float32),
             -self.params.force_limit,
@@ -113,6 +167,17 @@ class ForceActuator:
         Each candidate command is held across the preview. The calculation uses the
         same delay queue, first-order response, rate limit, and force limit as step().
         Shape is ``(n_intervals, n_candidates)``.
+
+        Args:
+            commands (np.ndarray): An array of candidate force commands to preview.
+            interval (float): The duration of each preview interval in seconds.
+            n_intervals (int): The number of intervals to preview into the future.
+
+        Returns:
+            np.ndarray: A 2D array of mean applied forces with shape (n_intervals, len(commands)).
+
+        Raises:
+            ValueError: If the preview interval or count is not positive.
         """
         if interval <= 0.0 or n_intervals < 1:
             raise ValueError("preview interval and count must be positive")

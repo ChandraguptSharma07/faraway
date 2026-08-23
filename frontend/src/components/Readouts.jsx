@@ -3,6 +3,16 @@ import './ControlHealth.css'
 
 // Monospaced HUD readouts + the live scoreboard (std dev and % arc time, passive
 // vs AeroPINN — the two headline metrics).
+
+/**
+ * Displays monospaced HUD readouts and the live scoreboard.
+ * Includes standard deviation and percentage arc time, comparing passive vs AeroPINN.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {Object} props.frameRef - A mutable ref object containing the latest telemetry frame data.
+ * @returns {JSX.Element} The rendered Readouts component.
+ */
 export default function Readouts({ frameRef }) {
   const f = useThrottledFrame(frameRef, 12)
   const p = f && f.passive
@@ -43,6 +53,20 @@ export default function Readouts({ frameRef }) {
   )
 }
 
+/**
+ * Renders a single statistic box with an optional unit and warning state.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {string} props.label - The label for the statistic.
+ * @param {string|number} props.value - The value to display.
+ * @param {string} [props.unit] - The unit of measurement (optional).
+ * @param {boolean} [props.accent] - Whether to apply an accent style.
+ * @param {boolean} [props.warn] - Whether to apply a warning style.
+ * @param {boolean} [props.text] - Whether the value is text-only (omits unit formatting).
+ * @param {string} [props.ariaLive] - Accessibility aria-live property value.
+ * @returns {JSX.Element} The rendered Stat component.
+ */
 function Stat({ label, value, unit, accent, warn, text, ariaLive }) {
   const cls = ['stat']
   if (accent) cls.push('accent')
@@ -58,6 +82,19 @@ function Stat({ label, value, unit, accent, warn, text, ariaLive }) {
   )
 }
 
+/**
+ * Renders a row comparing a metric between the passive and AeroPINN systems.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {string} props.label - The label for the comparison row.
+ * @param {string|number} props.pv - The value for the passive system.
+ * @param {string|number} props.av - The value for the AeroPINN system.
+ * @param {string} props.unit - The unit of measurement.
+ * @param {boolean} [props.pDanger] - Whether the passive value is in a danger state.
+ * @param {boolean} [props.aDanger] - Whether the AeroPINN value is in a danger state.
+ * @returns {JSX.Element} The rendered CompareRow component.
+ */
 function CompareRow({ label, pv, av, unit, pDanger, aDanger }) {
   return (
     <div className="compare-row">

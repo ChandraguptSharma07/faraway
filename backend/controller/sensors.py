@@ -20,6 +20,23 @@ from backend.sim.solver import deriv
 
 @dataclass(frozen=True)
 class SensorParams:
+    """Parameters defining sensor performance and error characteristics.
+
+    Attributes:
+        sample_period: Time between sensor samples in seconds.
+        delivery_latency: Delay from sampling to measurement availability in seconds.
+        dropout_probability: Probability of a packet being lost during transmission.
+        displacement_resolution: Quantisation resolution of the displacement sensor in meters.
+        displacement_noise_std: Standard deviation of displacement sensor noise in meters.
+        displacement_bias_std: Standard deviation of the static displacement bias in meters.
+        acceleration_resolution: Quantisation resolution of the accelerometer in m/s^2.
+        acceleration_noise_std: Standard deviation of the accelerometer noise in m/s^2.
+        acceleration_bias_std: Standard deviation of the static accelerometer bias in m/s^2.
+        force_resolution: Quantisation resolution of the force sensor in Newtons.
+        force_noise_std: Standard deviation of the force sensor noise in Newtons.
+        force_bias_std: Standard deviation of the static force sensor bias in Newtons.
+        stale_after: Time after which a delayed packet is considered stale and discarded in seconds.
+    """
     sample_period: float = 2.0e-3
     delivery_latency: float = 2.0e-3
     dropout_probability: float = 1.0e-3
@@ -65,6 +82,17 @@ SENSOR_BASELINE = {
 
 @dataclass(frozen=True)
 class SensorPacket:
+    """A collection of synchronized sensor measurements sampled at a single instant.
+
+    Attributes:
+        sampled_at: The simulation time the sample was taken in seconds.
+        delivered_at: The simulation time the packet will be available to the controller in seconds.
+        frame_position: Absolute vertical position of the pantograph frame in meters.
+        head_frame_displacement: Relative displacement between the pantograph head and frame in meters.
+        head_acceleration: Vertical acceleration of the pantograph head in m/s^2.
+        frame_acceleration: Vertical acceleration of the pantograph frame in m/s^2.
+        actuator_force: The measured force applied by the actuator in Newtons.
+    """
     sampled_at: float
     delivered_at: float
     frame_position: float
@@ -75,13 +103,32 @@ class SensorPacket:
 
 
 def _quantise(value: float, resolution: float) -> float:
+    """Quantise a continuous value to discrete steps defined by the resolution.
+
+    Args:
+        value: The continuous input value.
+        resolution: The discrete step size.
+
+    Returns:
+        The value rounded to the nearest multiple of the resolution.
+    """
     return float(np.round(value / resolution) * resolution)
 
 
 class MeasurementChain:
-    """Generate delayed packets from truth without exposing truth downstream."""
+    """Generate delayed packets from truth without exposing truth downstream.
+
+    Simulates the entire measurement pipeline including noise, bias, quantisation,
+    dropout, and latency.
+    """
 
     def __init__(self, params: SensorParams | None = None, seed: int = 7321):
+        """Initialize the measurement chain.
+
+        Args:
+            params: Sensor configuration parameters. Defaults to standard SensorParams.
+            seed: Random seed for noise and dropout generation.
+        """
         self.params = params or SensorParams()
         self.rng = np.random.default_rng(seed)
         self._next_sample = 0.0
@@ -107,6 +154,21 @@ class MeasurementChain:
         panto: PantographParams,
         beyond: BeyondEnvelope,
     ) -> None:
+        """Sample the true plant state and generate a delayed, noisy sensor packet.
+
+        The generated packet is placed in a pending queue until its delivery time.
+        If the current time hasn't reached the next sample period, or if a packet
+        is dropped (based on dropout probability), no packet is generated.
+
+        Args:
+            t: Current simulation time in seconds.
+            state: True state vector of the plant.
+            actuator_force: True force exerted by the actuator.
+            speed_ms: Operating speed in m/s.
+            dist: Current disturbance model.
+            panto: Pantograph mechanical parameters.
+            beyond: Envelope parameters scaling the disturbance.
+        """
         if t + 1.0e-12 < self._next_sample:
             return
         self._next_sample += self.params.sample_period
@@ -144,6 +206,14 @@ class MeasurementChain:
         ))
 
     def deliver(self, t: float) -> list[SensorPacket]:
+        """Retrieve all sensor packets that have arrived by the current time.
+
+        Args:
+            t: Current simulation time in seconds.
+
+        Returns:
+            A list of SensorPacket objects whose delivery time is less than or equal to `t`.
+        """
         packets = []
         while self._pending and self._pending[0].delivered_at <= t + 1.0e-12:
             packets.append(self._pending.popleft())

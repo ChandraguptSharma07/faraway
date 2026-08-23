@@ -33,7 +33,15 @@ CALIBRATION_STATUS = {
 
 
 def calibration_status() -> dict:
-    """Return a copy safe for API consumers to annotate."""
+    """Returns the current calibration status and requirements.
+    
+    Returns a safe copy of the calibration status dictionary for API consumers
+    to annotate without modifying the underlying reference data.
+    
+    Returns:
+        dict: A dictionary containing the calibration status, current evidence,
+            asset boundaries, and required dataset groups.
+    """
     return {
         **CALIBRATION_STATUS,
         "current_evidence": list(CALIBRATION_STATUS["current_evidence"]),

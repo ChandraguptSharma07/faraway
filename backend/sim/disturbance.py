@@ -22,12 +22,21 @@ from .parameters import BeyondEnvelope, CatenaryParams
 
 
 class Disturbance:
+    """Model representing the physical disturbances on a catenary system."""
+    
     def __init__(
         self,
         cat: CatenaryParams,
         n_turb: int = 48,
         seed: int = 12345,
     ) -> None:
+        """Initialize the Disturbance model.
+
+        Args:
+            cat (CatenaryParams): Parameters of the catenary system.
+            n_turb (int, optional): Number of turbulence components. Defaults to 48.
+            seed (int, optional): Random seed for reproducible turbulence. Defaults to 12345.
+        """
         self.cat = cat
         rng = np.random.default_rng(seed)
         # Band-limited turbulence as a sum of n_turb random-phase sinusoids spread
@@ -42,7 +51,16 @@ class Disturbance:
 
     # --- components ---------------------------------------------------------
     def y_span(self, t, speed_ms: float, beyond: BeyondEnvelope) -> np.ndarray | float:
-        """Span-passing wire height. Peak at supports, sag mid-span."""
+        """Calculate the span-passing wire height, peaking at supports and sagging mid-span.
+
+        Args:
+            t (float or np.ndarray): Time in seconds.
+            speed_ms (float): Speed of the train in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters including tension factor.
+
+        Returns:
+            np.ndarray | float: The span-passing wire height at time t.
+        """
         if getattr(t, "ndim", 0) == 0:
             x = speed_ms * t + self._x0
             L = self.cat.span_length
@@ -58,7 +76,15 @@ class Disturbance:
         return amp * np.cos(arg) + amp2 * np.cos(2 * arg)
 
     def y_turb(self, t, beyond: BeyondEnvelope) -> np.ndarray | float:
-        """Band-limited turbulence (metres of equivalent wire displacement)."""
+        """Calculate the band-limited turbulence.
+
+        Args:
+            t (float or np.ndarray): Time in seconds.
+            beyond (BeyondEnvelope): Beyond-envelope parameters including turbulence gain.
+
+        Returns:
+            np.ndarray | float: The turbulence in meters of equivalent wire displacement.
+        """
         gain = beyond.turbulence_gain
         if getattr(t, "ndim", 0) == 0:
             phases = self._turb_omega * t + self._turb_phase
@@ -69,7 +95,16 @@ class Disturbance:
         return self._turb_amp * np.sin(phases).sum(axis=-1) * gain
 
     def y_wire(self, t, speed_ms: float, beyond: BeyondEnvelope) -> np.ndarray | float:
-        """Total effective wire vertical trajectory the head follows."""
+        """Calculate the total effective wire vertical trajectory the head follows.
+
+        Args:
+            t (float or np.ndarray): Time in seconds.
+            speed_ms (float): Speed of the train in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+
+        Returns:
+            np.ndarray | float: Total effective wire height at time t.
+        """
         return self.y_span(t, speed_ms, beyond) + self.y_turb(t, beyond)
 
     def wire_kinematics(
@@ -78,11 +113,19 @@ class Disturbance:
         speed_ms: float,
         beyond: BeyondEnvelope,
     ) -> tuple[float, float]:
-        """Scalar wire displacement and its exact time derivative.
+        """Calculate the scalar wire displacement and its exact time derivative.
 
         The coupled solver needs both values at every force evaluation. Computing
         them together avoids repeating the turbulence sum and removes the finite-
         difference approximation previously used for wire velocity.
+
+        Args:
+            t (float): Time in seconds.
+            speed_ms (float): Speed of the train in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+
+        Returns:
+            tuple[float, float]: A tuple of (wire_displacement, wire_velocity).
         """
         x = speed_ms * float(t) + self._x0
         tension = max(beyond.tension_factor, 1.0e-3)
@@ -110,9 +153,26 @@ class Disturbance:
         speed_ms: float,
         beyond: BeyondEnvelope,
     ) -> float:
-        """Exact scalar time derivative of :meth:`y_wire`."""
+        """Calculate the exact scalar time derivative of the wire displacement.
+
+        Args:
+            t (float): Time in seconds.
+            speed_ms (float): Speed of the train in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters.
+
+        Returns:
+            float: The wire velocity at time t.
+        """
         return self.wire_kinematics(t, speed_ms, beyond)[1]
 
     def aero_force(self, speed_ms: float, beyond: BeyondEnvelope) -> float:
-        """Aerodynamic uplift force on the head (N): c_aero * v^2 (+ transient gust)."""
+        """Calculate the aerodynamic uplift force on the head.
+
+        Args:
+            speed_ms (float): Speed of the train in meters per second.
+            beyond (BeyondEnvelope): Beyond-envelope parameters including gust.
+
+        Returns:
+            float: The aerodynamic uplift force in Newtons.
+        """
         return self.cat.c_aero * speed_ms * speed_ms + beyond.gust

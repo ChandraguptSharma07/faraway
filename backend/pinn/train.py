@@ -32,6 +32,25 @@ def train(
     seed: int = 0,
     verbose: bool = True,
 ) -> dict:
+    """Trains the Physics-Informed Neural Network (PINN) predictor.
+
+    The loss function combines a data-driven loss (supervised agreement with a classical
+    solver at tau = H) and an ODE residual loss (EN 50318 equation of motion residual at
+    random collocation points).
+
+    Args:
+        n_samples (int, optional): Number of dataset samples to generate. Defaults to 60000.
+        epochs (int, optional): Number of training epochs. Defaults to 350.
+        batch (int, optional): Batch size for training. Defaults to 4096.
+        lr (float, optional): Learning rate for the Adam optimizer. Defaults to 2.0e-3.
+        w_ode (float, optional): Weight for the ODE loss term. Defaults to 0.05.
+        seed (int, optional): Random seed for reproducibility. Defaults to 0.
+        verbose (bool, optional): Whether to print training progress. Defaults to True.
+
+    Returns:
+        dict: A dictionary containing the validation force RMSE ('val_force_rmse_N') and
+            the path to the saved model ('path').
+    """
     torch.manual_seed(seed)
     cfg = PinnConfig()
     H = cfg.horizon
@@ -62,6 +81,15 @@ def train(
     f_sc = 50.0  # N residual scale
 
     def data_loss(c, y):
+        """Computes the data-driven loss component.
+
+        Args:
+            c (torch.Tensor): Context tensor containing initial states and inputs.
+            y (torch.Tensor): Target tensor containing the true states at tau = H.
+
+        Returns:
+            torch.Tensor: The mean squared error loss for positions and velocities.
+        """
         tau = torch.full((c.shape[0], 1), H, requires_grad=True)
         z1, z2 = model.trajectory(tau, c)
         z1d = torch.autograd.grad(z1, tau, torch.ones_like(z1), create_graph=True)[0]
@@ -71,6 +99,17 @@ def train(
         return (l_pos + l_vel).mean()
 
     def ode_loss(c):
+        """Computes the Ordinary Differential Equation (ODE) residual loss.
+
+        Evaluates the network at random collocation points in (0, H) and penalizes
+        deviations from the physical equations of motion.
+
+        Args:
+            c (torch.Tensor): Context tensor containing initial states and inputs.
+
+        Returns:
+            torch.Tensor: The mean squared residual loss scaled by f_sc.
+        """
         tau = torch.rand(c.shape[0], 1) * H
         r1, r2 = model.ode_residual(tau, c)
         return ((r1 / f_sc) ** 2 + (r2 / f_sc) ** 2).mean()
@@ -113,7 +152,20 @@ def train(
 
 @torch.no_grad()
 def eval_force_rmse(model: PantoPINN, ctx_val: torch.Tensor, tgt_val: torch.Tensor, H: float) -> float:
-    """Contact-force RMSE at tau=H: PINN vs the true rolled-forward state."""
+    """Evaluates the contact-force Root Mean Square Error (RMSE) at tau=H.
+
+    Compares the PINN's predicted contact force against the true contact force calculated
+    from the rolled-forward state.
+
+    Args:
+        model (PantoPINN): The trained PINN model.
+        ctx_val (torch.Tensor): Validation context tensor containing initial states, controls, and wire features.
+        tgt_val (torch.Tensor): Validation target tensor containing the true next states.
+        H (float): The prediction horizon.
+
+    Returns:
+        float: The contact-force RMSE in Newtons.
+    """
     tau = torch.full((ctx_val.shape[0], 1), H)
     f_pred = model.contact_force(tau, ctx_val)
     yw = model.wire(tau, ctx_val)

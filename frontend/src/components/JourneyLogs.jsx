@@ -31,6 +31,15 @@ const FIELDS = [
   ['scenario_name', 'Journey/scenario name', 'text'],
 ]
 
+/**
+ * Provides an interface to view and manage journey logs and audit exports.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {string} [props.activeJourneyId] - The ID of the currently active journey to select by default.
+ * @param {Function} props.onClose - Callback function invoked to close the journey logs view.
+ * @returns {JSX.Element} The rendered JourneyLogs component.
+ */
 export default function JourneyLogs({ activeJourneyId, onClose }) {
   const closeRef = useRef(null)
   const dialogRef = useRef(null)
@@ -51,6 +60,14 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
     [journeys, selectedId],
   )
 
+  /**
+   * Fetches the journey catalogue and updates the state.
+   *
+   * @async
+   * @function load
+   * @param {boolean} [announce=false] - Whether to announce the result in the status message.
+   * @returns {Promise<void>}
+   */
   const load = async (announce = false) => {
     try {
       const data = await fetchJourneys(includeArchived)
@@ -105,6 +122,13 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [includeArchived, activeJourneyId])
 
+  /**
+   * Selects a journey to view its details.
+   *
+   * @function selectJourney
+   * @param {Object} journey - The journey object to select.
+   * @returns {void}
+   */
   const selectJourney = (journey) => {
     formJourneyRef.current = journey.id
     setSelectedId(journey.id)
@@ -116,6 +140,16 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
     setRecordHistory([])
   }
 
+  /**
+   * Loads a specific page of records for the selected journey.
+   *
+   * @async
+   * @function viewRecords
+   * @param {Object} query - The record query details containing the label and source.
+   * @param {number} [cursor=0] - The starting cursor for the page.
+   * @param {number[]} [history=[]] - The history of cursors for navigating back.
+   * @returns {Promise<void>}
+   */
   const viewRecords = async (query, cursor = 0, history = []) => {
     if (!selected) return
     setStatus(`Loading ${query.label.toLowerCase()}…`)
@@ -130,6 +164,14 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
     }
   }
 
+  /**
+   * Saves metadata changes for the currently selected journey.
+   *
+   * @async
+   * @function saveMetadata
+   * @param {Event} event - The form submission event.
+   * @returns {Promise<void>}
+   */
   const saveMetadata = async (event) => {
     event.preventDefault()
     if (!selected) return
@@ -143,6 +185,13 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
     }
   }
 
+  /**
+   * Archives the currently selected journey.
+   *
+   * @async
+   * @function archive
+   * @returns {Promise<void>}
+   */
   const archive = async () => {
     setStatus('Archiving journey…')
     try {
@@ -156,6 +205,13 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
     }
   }
 
+  /**
+   * Permanently deletes the currently selected journey.
+   *
+   * @async
+   * @function remove
+   * @returns {Promise<void>}
+   */
   const remove = async () => {
     setStatus('Permanently deleting journey…')
     try {
@@ -325,10 +381,28 @@ export default function JourneyLogs({ activeJourneyId, onClose }) {
   )
 }
 
+/**
+ * Renders a data fact as a description list item.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {string} props.label - The label for the fact.
+ * @param {string|number} [props.value] - The value of the fact.
+ * @param {boolean} [props.mono] - Whether to use a monospace font for the value.
+ * @returns {JSX.Element} The rendered Fact component.
+ */
 function Fact({ label, value, mono }) {
   return <div><dt>{label}</dt><dd className={mono ? 'mono' : ''}>{value ?? '—'}</dd></div>
 }
 
+/**
+ * Renders a summary table of the contact forces.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {Object} [props.summary] - The summary data object containing force statistics.
+ * @returns {JSX.Element} The rendered ForceSummary component.
+ */
 function ForceSummary({ summary }) {
   const lanes = summary?.lanes
   if (!lanes) return <p>Summary will be finalized when the journey ends.</p>
@@ -352,6 +426,18 @@ const RECORD_VIEWS = [
   { label: 'DASHBOARD FRAMES', source: 'telemetry', stream: 'dashboard_frame_30hz' },
 ]
 
+/**
+ * Provides a paginated browser for viewing log records.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {Object} props.page - The current page of records.
+ * @param {string} props.label - The label for the record view.
+ * @param {boolean} props.canGoBack - Whether the user can navigate to the previous page.
+ * @param {Function} props.onBack - Callback invoked to navigate back.
+ * @param {Function} props.onNext - Callback invoked to navigate to the next page.
+ * @returns {JSX.Element} The rendered RecordBrowser component.
+ */
 function RecordBrowser({ page, label, canGoBack, onBack, onNext }) {
   return (
     <div className="record-browser" aria-live="polite">
@@ -374,6 +460,14 @@ function RecordBrowser({ page, label, canGoBack, onBack, onNext }) {
   )
 }
 
+/**
+ * Renders an individual record item with summary metrics and raw data.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {Object} props.record - The record data object.
+ * @returns {JSX.Element} The rendered RecordItem component.
+ */
 function RecordItem({ record }) {
   const physics = record.physics
   const constants = record.constants
@@ -413,6 +507,13 @@ function RecordItem({ record }) {
   )
 }
 
+/**
+ * Formats a byte count into a human-readable string with units.
+ *
+ * @function formatBytes
+ * @param {number} bytes - The number of bytes.
+ * @returns {string} The formatted byte string.
+ */
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`
   const units = ['KB', 'MB', 'GB', 'TB']

@@ -78,10 +78,20 @@ NUMERIC_METADATA = {
 
 
 def _utc_now() -> str:
+    """Returns the current UTC time in ISO 8601 format.
+
+    Returns:
+        str: The current UTC time as an ISO 8601 string.
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _project_data_root() -> Path:
+    """Resolves the root directory for project data.
+
+    Returns:
+        Path: The absolute path to the data root directory.
+    """
     configured = os.getenv("AEROPINN_DATA_DIR")
     if configured:
         return Path(configured).expanduser().resolve()
@@ -89,6 +99,15 @@ def _project_data_root() -> Path:
 
 
 def _flatten(value: dict, prefix: str = "") -> dict[str, Any]:
+    """Flattens a nested dictionary into a single-level dictionary with dot-separated keys.
+
+    Args:
+        value (dict): The dictionary to flatten.
+        prefix (str, optional): The prefix to prepend to keys. Defaults to "".
+
+    Returns:
+        dict[str, Any]: The flattened dictionary.
+    """
     output: dict[str, Any] = {}
     for key, item in value.items():
         name = f"{prefix}.{key}" if prefix else key
@@ -102,6 +121,14 @@ def _flatten(value: dict, prefix: str = "") -> dict[str, Any]:
 
 
 def _sha256(path: Path) -> str:
+    """Computes the SHA-256 hash of a file.
+
+    Args:
+        path (Path): The path to the file.
+
+    Returns:
+        str: The hexadecimal representation of the file's SHA-256 hash.
+    """
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
@@ -110,6 +137,14 @@ def _sha256(path: Path) -> str:
 
 
 def _describe_field(field: str) -> str:
+    """Provides a human-readable description for a telemetry field.
+
+    Args:
+        field (str): The field name.
+
+    Returns:
+        str: The description of the field.
+    """
     if field in FIELD_DOCUMENTATION:
         return FIELD_DOCUMENTATION[field]
     units = {
@@ -130,6 +165,17 @@ def _describe_field(field: str) -> str:
 
 
 def _validate_metadata(changes: dict) -> dict:
+    """Validates and sanitizes a dictionary of metadata changes.
+
+    Args:
+        changes (dict): The proposed metadata changes.
+
+    Returns:
+        dict: The validated and sanitized metadata.
+
+    Raises:
+        ValueError: If any unsupported fields are present or if values are invalid.
+    """
     unsupported = set(changes) - EDITABLE_METADATA
     if unsupported:
         raise ValueError(f"unsupported metadata fields: {', '.join(sorted(unsupported))}")
@@ -163,7 +209,24 @@ def _validate_metadata(changes: dict) -> dict:
 
 
 class JourneyStore:
+    """Manages the persistence, indexing, and retrieval of journey telemetry.
+
+    This class handles a SQLite database for journey metadata and events,
+    as well as file storage for high-frequency telemetry data.
+
+    Attributes:
+        root (Path): The root directory for journey data.
+        telemetry_dir (Path): The directory for telemetry NDJSON files.
+        events_dir (Path): The directory for event NDJSON files.
+        export_dir (Path): The directory for generated export files.
+    """
+
     def __init__(self, root: Path | None = None):
+        """Initializes the JourneyStore, creating required directories and schema.
+
+        Args:
+            root (Path | None, optional): The root directory. Defaults to None.
+        """
         self.root = (root or _project_data_root()).resolve()
         self.telemetry_dir = self.root / "telemetry"
         self.events_dir = self.root / "events"
@@ -179,6 +242,7 @@ class JourneyStore:
         self._initialize_schema()
 
     def _initialize_schema(self) -> None:
+        """Sets up the SQLite database schema for journeys and audit logs."""
         with self._lock, self._connection:
             self._connection.executescript(
                 """
@@ -212,6 +276,14 @@ class JourneyStore:
             )
 
     def create(self, metadata: dict | None = None) -> "JourneySession":
+        """Creates a new journey session and records its initial state.
+
+        Args:
+            metadata (dict | None, optional): Initial metadata for the journey.
+
+        Returns:
+            JourneySession: The newly created active journey session.
+        """
         journey_id = uuid.uuid4().hex
         supplied = dict(metadata or {})
         internal = {
@@ -245,6 +317,13 @@ class JourneyStore:
         return session
 
     def _audit(self, action: str, journey_id: str, details: dict | None = None) -> None:
+        """Records an action in the audit log.
+
+        Args:
+            action (str): The name of the action performed.
+            journey_id (str): The ID of the journey involved.
+            details (dict | None, optional): Additional contextual details.
+        """
         self._connection.execute(
             "INSERT INTO audit_log(recorded_at, action, journey_id, details_json) "
             "VALUES (?, ?, ?, ?)",
@@ -252,6 +331,18 @@ class JourneyStore:
         )
 
     def update_metadata(self, journey_id: str, changes: dict) -> dict:
+        """Updates the metadata for an existing journey.
+
+        Args:
+            journey_id (str): The ID of the journey.
+            changes (dict): The fields to update.
+
+        Returns:
+            dict: The updated metadata dictionary.
+
+        Raises:
+            ValueError: If the metadata changes are invalid or empty.
+        """
         clean = _validate_metadata(changes)
         if not clean:
             raise ValueError("no supported metadata fields supplied")
@@ -271,6 +362,14 @@ class JourneyStore:
             return metadata
 
     def list(self, include_archived: bool = False) -> list[dict]:
+        """Lists journeys ordered by start time, descending.
+
+        Args:
+            include_archived (bool, optional): Whether to include archived journeys. Defaults to False.
+
+        Returns:
+            list[dict]: A list of serialized journey records.
+        """
         clause = "" if include_archived else "WHERE archived=0"
         with self._lock:
             rows = self._connection.execute(
@@ -279,15 +378,39 @@ class JourneyStore:
         return [self._serialize(row, include_paths=False) for row in rows]
 
     def get(self, journey_id: str) -> dict:
+        """Retrieves a single journey by ID.
+
+        Args:
+            journey_id (str): The ID of the journey.
+
+        Returns:
+            dict: The serialized journey record.
+        """
         with self._lock:
             return self._serialize(self._row(journey_id), include_paths=False)
 
     def has_sample(self) -> bool:
+        """Checks if a sample journey exists in the database.
+
+        Returns:
+            bool: True if at least one journey is marked as a sample, False otherwise.
+        """
         with self._lock:
             rows = self._connection.execute("SELECT metadata_json FROM journeys").fetchall()
         return any(json.loads(row[0]).get("is_sample") for row in rows)
 
     def archive(self, journey_id: str) -> dict:
+        """Marks a journey as archived.
+
+        Args:
+            journey_id (str): The ID of the journey to archive.
+
+        Returns:
+            dict: The updated journey record.
+
+        Raises:
+            ValueError: If the journey is currently running.
+        """
         with self._lock, self._connection:
             row = self._row(journey_id)
             if row["status"] == "RUNNING":
@@ -299,6 +422,15 @@ class JourneyStore:
         return self.get(journey_id)
 
     def delete(self, journey_id: str, confirmation: str) -> None:
+        """Permanently deletes a journey and all associated data files.
+
+        Args:
+            journey_id (str): The ID of the journey to delete.
+            confirmation (str): Must exactly match the journey_id to confirm.
+
+        Raises:
+            ValueError: If confirmation fails or the journey is running.
+        """
         if confirmation != journey_id:
             raise ValueError("confirmation must exactly match the journey id")
         with self._lock, self._connection:
@@ -317,6 +449,18 @@ class JourneyStore:
                 path.unlink(missing_ok=True)
 
     def export(self, journey_id: str, kind: str) -> tuple[Path, str]:
+        """Generates an export package or file for a journey.
+
+        Args:
+            journey_id (str): The ID of the journey to export.
+            kind (str): The format ('csv', 'json', or 'audit').
+
+        Returns:
+            tuple[Path, str]: The path to the exported file and its MIME type.
+
+        Raises:
+            ValueError: If the requested format is unsupported.
+        """
         if kind not in {"csv", "json", "audit"}:
             raise ValueError("format must be csv, json, or audit")
         with self._lock:
@@ -359,7 +503,21 @@ class JourneyStore:
         limit: int = 25,
         stream: str | None = None,
     ) -> dict:
-        """Read a bounded NDJSON page using byte cursors, never whole-file loading."""
+        """Reads a bounded NDJSON page using byte cursors, avoiding whole-file loading.
+
+        Args:
+            journey_id (str): The ID of the journey.
+            source (str): The data source ('telemetry' or 'events').
+            cursor (int, optional): The byte offset to start reading from. Defaults to 0.
+            limit (int, optional): The maximum number of records to return. Defaults to 25.
+            stream (str | None, optional): An optional stream filter for telemetry. Defaults to None.
+
+        Returns:
+            dict: A dictionary containing the records, cursors, and metadata.
+
+        Raises:
+            ValueError: If any arguments are invalid.
+        """
         if source not in {"telemetry", "events"}:
             raise ValueError("source must be telemetry or events")
         if cursor < 0:
@@ -420,6 +578,19 @@ class JourneyStore:
         events_path: Path,
         events_size: int,
     ) -> tuple[Path, str]:
+        """Assembles a comprehensive audit ZIP package for a journey.
+
+        Args:
+            journey_id (str): The ID of the journey.
+            journey (dict): The serialized journey metadata.
+            telemetry_path (Path): Path to the telemetry NDJSON file.
+            telemetry_size (int): Expected byte size of the telemetry file.
+            events_path (Path): Path to the events NDJSON file.
+            events_size (int): Expected byte size of the events file.
+
+        Returns:
+            tuple[Path, str]: The path to the generated ZIP package and its MIME type.
+        """
         export_token = uuid.uuid4().hex
         work = self.export_dir / f"{journey_id}.{export_token}.work"
         work.mkdir()
@@ -519,6 +690,15 @@ class JourneyStore:
 
     @staticmethod
     def _iter_ndjson(path: Path, snapshot_bytes: int | None = None):
+        """Iterates over records in an NDJSON file up to a specified byte boundary.
+
+        Args:
+            path (Path): Path to the NDJSON file.
+            snapshot_bytes (int | None, optional): Maximum bytes to read. Defaults to None.
+
+        Yields:
+            dict: Parsed JSON records from the file.
+        """
         if not path.exists():
             return
         boundary = path.stat().st_size if snapshot_bytes is None else snapshot_bytes
@@ -532,6 +712,14 @@ class JourneyStore:
 
     @staticmethod
     def _read_ndjson(path: Path) -> list[dict]:
+        """Reads all records from an NDJSON file.
+
+        Args:
+            path (Path): Path to the NDJSON file.
+
+        Returns:
+            list[dict]: A list of all parsed JSON records.
+        """
         return list(JourneyStore._iter_ndjson(path))
 
     @staticmethod
@@ -540,6 +728,16 @@ class JourneyStore:
         snapshot_bytes: int,
         stream: str | None = None,
     ) -> list[str]:
+        """Extracts and sorts all unique flattened field names from a telemetry snapshot.
+
+        Args:
+            path (Path): Path to the NDJSON file.
+            snapshot_bytes (int): Maximum bytes to read.
+            stream (str | None, optional): Stream filter to apply. Defaults to None.
+
+        Returns:
+            list[str]: Sorted list of unique field names.
+        """
         fields: set[str] = set()
         for record in JourneyStore._iter_ndjson(path, snapshot_bytes):
             if stream is None or record.get("stream") == stream:
@@ -553,6 +751,14 @@ class JourneyStore:
         destination: Path,
         stream: str | None = None,
     ) -> None:
+        """Writes a filtered NDJSON snapshot to a CSV file.
+
+        Args:
+            source (Path): Path to the source NDJSON file.
+            snapshot_bytes (int): Maximum bytes to read.
+            destination (Path): Path to write the resulting CSV file.
+            stream (str | None, optional): Stream filter to apply. Defaults to None.
+        """
         fields = JourneyStore._snapshot_fields(source, snapshot_bytes, stream)
         with destination.open("w", encoding="utf-8", newline="") as output:
             writer = csv.DictWriter(output, fieldnames=fields, extrasaction="ignore")
@@ -567,6 +773,13 @@ class JourneyStore:
         source: Path,
         snapshot_bytes: int,
     ) -> None:
+        """Converts an NDJSON snapshot into a JSON array file.
+
+        Args:
+            destination (Path): Path to write the resulting JSON array file.
+            source (Path): Path to the source NDJSON file.
+            snapshot_bytes (int): Maximum bytes to read.
+        """
         with destination.open("w", encoding="utf-8") as output:
             output.write("[\n")
             first = True
@@ -586,6 +799,16 @@ class JourneyStore:
         events_path: Path,
         events_size: int,
     ) -> None:
+        """Writes a full JSON export file containing journey metadata, events, and telemetry.
+
+        Args:
+            destination (Path): Path to write the full JSON export.
+            journey (dict): Journey metadata.
+            telemetry_path (Path): Path to the telemetry file.
+            telemetry_size (int): Size limit for telemetry to read.
+            events_path (Path): Path to the events file.
+            events_size (int): Size limit for events to read.
+        """
         with destination.open("w", encoding="utf-8") as output:
             output.write('{"schema_version":')
             json.dump(SCHEMA_VERSION, output)
@@ -606,6 +829,17 @@ class JourneyStore:
             output.write("}\n")
 
     def _row(self, journey_id: str) -> sqlite3.Row:
+        """Fetches a raw SQLite row for a journey by ID.
+
+        Args:
+            journey_id (str): The journey ID.
+
+        Returns:
+            sqlite3.Row: The database row representing the journey.
+
+        Raises:
+            KeyError: If the journey is not found.
+        """
         row = self._connection.execute(
             "SELECT * FROM journeys WHERE id=?", (journey_id,)
         ).fetchone()
@@ -615,6 +849,15 @@ class JourneyStore:
 
     @staticmethod
     def _serialize(row: sqlite3.Row, include_paths: bool) -> dict:
+        """Converts a SQLite journey row into a serialized dictionary representation.
+
+        Args:
+            row (sqlite3.Row): The raw database row.
+            include_paths (bool): Whether to include internal file paths.
+
+        Returns:
+            dict: The serialized journey dictionary.
+        """
         telemetry_path = Path(row["telemetry_file"])
         events_path = Path(row["events_file"])
         telemetry_bytes = telemetry_path.stat().st_size if telemetry_path.exists() else 0
@@ -643,7 +886,35 @@ class JourneyStore:
 
 
 class JourneySession:
+    """Represents an active simulation journey being recorded.
+
+    This class manages real-time telemetry streaming, event detection,
+    and checkpointing to the underlying database and log files.
+
+    Attributes:
+        store (JourneyStore): The parent journey store.
+        id (str): The unique journey identifier.
+        started_at (str): The UTC start time of the journey.
+        metadata (dict): The journey metadata.
+        telemetry_path (Path): Path to the telemetry NDJSON file.
+        events_path (Path): Path to the events NDJSON file.
+        sample_count (int): Total number of recorded telemetry samples.
+        frame_count (int): Total number of recorded 30Hz frames.
+        physics_count (int): Total number of native 1kHz physics samples.
+        constants_count (int): Total number of configuration snapshots.
+        event_count (int): Total number of generated events.
+        distance_m (float): Total simulated route distance covered in metres.
+    """
+
     def __init__(self, store: JourneyStore, journey_id: str, started_at: str, metadata: dict):
+        """Initializes a new JourneySession.
+
+        Args:
+            store (JourneyStore): The store managing this session.
+            journey_id (str): The unique journey identifier.
+            started_at (str): The start time in ISO 8601 UTC.
+            metadata (dict): The initial metadata dictionary.
+        """
         self.store = store
         self.id = journey_id
         self.started_at = started_at
@@ -673,6 +944,17 @@ class JourneySession:
         self._closed = False
 
     def record(self, frame: dict) -> dict:
+        """Records a 30Hz dashboard telemetry frame.
+
+        Args:
+            frame (dict): The simulated telemetry data.
+
+        Returns:
+            dict: The decorated NDJSON record.
+
+        Raises:
+            RuntimeError: If the journey is already closed.
+        """
         if self._closed:
             raise RuntimeError("journey is closed")
         simulation_t = float(frame["t"])
@@ -708,7 +990,17 @@ class JourneySession:
         return record
 
     def record_physics(self, sample: dict) -> dict:
-        """Append one native 1 ms plant/controller sample."""
+        """Appends one native 1 ms plant/controller sample to the audit log.
+
+        Args:
+            sample (dict): The physics telemetry sample.
+
+        Returns:
+            dict: The decorated NDJSON record.
+
+        Raises:
+            RuntimeError: If the journey is already closed.
+        """
         if self._closed:
             raise RuntimeError("journey is closed")
         if self.physics_count == 0 and self.frame_count:
@@ -751,7 +1043,18 @@ class JourneySession:
         return record
 
     def record_constants(self, snapshot: dict, period_s: float = 1.0) -> dict | None:
-        """Persist configuration at a bounded cadence for later reproducibility."""
+        """Persists the engine configuration at a bounded cadence for later reproducibility.
+
+        Args:
+            snapshot (dict): The current configuration snapshot.
+            period_s (float, optional): Minimum time between snapshots in seconds. Defaults to 1.0.
+
+        Returns:
+            dict | None: The recorded JSON dictionary or None if skipped due to cadence.
+
+        Raises:
+            RuntimeError: If the journey is already closed.
+        """
         if self._closed:
             raise RuntimeError("journey is closed")
         simulation_t = float(snapshot["t_s"])
@@ -776,6 +1079,15 @@ class JourneySession:
         return record
 
     def _location(self, simulation_t: float, speed_kmh: float) -> dict:
+        """Estimates spatial route chainage and coordinates from time and speed.
+
+        Args:
+            simulation_t (float): The current simulation time in seconds.
+            speed_kmh (float): The current train speed in km/h.
+
+        Returns:
+            dict: The estimated location dictionary.
+        """
         if self._last_t is not None:
             self.distance_m += max(simulation_t - self._last_t, 0.0) * speed_kmh / 3.6
         self._last_t = max(simulation_t, self._last_t or simulation_t)
@@ -793,10 +1105,16 @@ class JourneySession:
         }
 
     def _write_record(self, record: dict) -> None:
+        """Serializes and writes a single NDJSON record.
+
+        Args:
+            record (dict): The record to append to the log.
+        """
         self._telemetry.write(json.dumps(record, separators=(",", ":")) + "\n")
         self.sample_count += 1
 
     def _reset_force_stats(self) -> None:
+        """Resets running statistical accumulators for contact force."""
         self._stats_count = 0
         for stats in self._force_stats.values():
             stats.update({"mean": 0.0, "m2": 0.0, "loss": 0, "min": None, "max": None})
@@ -804,6 +1122,14 @@ class JourneySession:
     def _update_force_stats(
         self, passive_force: float, active_force: float, passive_lost: bool, active_lost: bool
     ) -> None:
+        """Updates Welford's online accumulators for lane performance metrics.
+
+        Args:
+            passive_force (float): The passive pantograph contact force.
+            active_force (float): The controlled pantograph contact force.
+            passive_lost (bool): Whether the passive lane lost wire contact.
+            active_lost (bool): Whether the active lane lost wire contact.
+        """
         self._stats_count += 1
         for lane, force, lost in (
             ("passive", passive_force, passive_lost),
@@ -818,11 +1144,27 @@ class JourneySession:
             stats["max"] = force if stats["max"] is None else max(stats["max"], force)
 
     def _interpolate(self, start_key: str, end_key: str, fraction: float) -> float:
+        """Linearly interpolates between two numeric metadata fields.
+
+        Args:
+            start_key (str): The metadata key for the start value.
+            end_key (str): The metadata key for the end value.
+            fraction (float): The fraction (0.0 to 1.0) along the span.
+
+        Returns:
+            float: The interpolated value.
+        """
         start = float(self.metadata.get(start_key, 0.0))
         end = float(self.metadata.get(end_key, start))
         return start + fraction * (end - start)
 
     def _detect_events(self, sample: dict, location: dict) -> None:
+        """Scans a telemetry sample for physical events and state transitions.
+
+        Args:
+            sample (dict): The telemetry sample fields.
+            location (dict): The current route location.
+        """
         flags = {
             "PASSIVE_CONTACT_LOSS": bool(sample["passive_lost"]),
             "AEROPINN_CONTACT_LOSS": bool(sample["aeropinn_lost"]),
@@ -839,7 +1181,12 @@ class JourneySession:
         self._detect_saturation(sample, location)
 
     def _detect_saturation(self, sample: dict, location: dict) -> None:
-        """Debounce actuator-limit events while retaining raw duty-cycle evidence."""
+        """Debounces actuator-limit events while retaining raw duty-cycle evidence.
+
+        Args:
+            sample (dict): The telemetry sample fields.
+            location (dict): The current route location.
+        """
         name = "ACTUATOR_SATURATION"
         active = self._previous_flags.get(name, False)
         command = abs(float(sample["command_N"]))
@@ -876,6 +1223,12 @@ class JourneySession:
         self._saturation_candidate_since = None
 
     def event(self, event_type: str, details: dict | None = None) -> None:
+        """Records a timestamped event to the journey's event log.
+
+        Args:
+            event_type (str): The type or name of the event.
+            details (dict | None, optional): Additional contextual details for the event.
+        """
         if self._closed:
             return
         event = {
@@ -888,6 +1241,11 @@ class JourneySession:
         self.event_count += 1
 
     def summary(self) -> dict:
+        """Generates a summary of the journey's telemetry and statistics.
+
+        Returns:
+            dict: The journey summary statistics.
+        """
         lanes = {}
         for lane, stats in self._force_stats.items():
             variance = stats["m2"] / self._stats_count if self._stats_count else 0.0
@@ -922,6 +1280,7 @@ class JourneySession:
         }
 
     def _checkpoint(self) -> None:
+        """Updates the database with the latest journey summary and sample counts."""
         with self.store._lock, self.store._connection:
             self.store._connection.execute(
                 """UPDATE journeys SET summary_json=?, sample_count=?, event_count=?
@@ -930,6 +1289,11 @@ class JourneySession:
             )
 
     def finalize(self, status: str = "COMPLETED") -> None:
+        """Closes the journey session, flushing files and updating the database status.
+
+        Args:
+            status (str, optional): The final status of the journey. Defaults to "COMPLETED".
+        """
         if self._closed:
             return
         self.event("JOURNEY_ENDED", {"status": status})
@@ -948,7 +1312,18 @@ class JourneySession:
 
 
 def ensure_sample_journey(store: JourneyStore, predictor) -> str | None:
-    """Create one reproducible stress-test journey through the production engine."""
+    """Creates one reproducible stress-test journey through the production engine.
+
+    Args:
+        store (JourneyStore): The active journey store.
+        predictor (Any): The inference predictor to use for control.
+
+    Returns:
+        str | None: The ID of the created sample journey, or None if one already exists.
+
+    Raises:
+        Exception: If simulation or recording fails, the journey is finalized as INTERRUPTED.
+    """
     if store.has_sample():
         return None
     from backend.server.engine import Engine
@@ -964,6 +1339,11 @@ def ensure_sample_journey(store: JourneyStore, predictor) -> str | None:
     engine = Engine(seed=999, predictor=predictor)
 
     def capture(frames: int) -> None:
+        """Advances the simulation by the given number of frames and records data.
+
+        Args:
+            frames (int): The number of 30Hz frames to simulate.
+        """
         for _ in range(frames):
             engine.step(33, audit_callback=journey.record_physics)
             frame = engine.frame()

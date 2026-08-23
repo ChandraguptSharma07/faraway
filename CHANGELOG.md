@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 ### Added
+- Added comprehensive Google-style docstrings to all Python classes and functions in the backend (`catenary`, `controller`, `pinn`, `server`, `sim`, `validation`).
+- Added comprehensive JSDoc comments to all React components, hooks, and utility functions in the frontend.
 - Added automatic persistent journey logging with route/GPS documentation, event indexing, accessible session management, and CSV/JSON/ZIP audit exports.
 - Added a reproducible Lastochka high-wind sample journey generated through the production simulation path.
 - Added `simulate_live` modal consistency endpoint at `/api/modal-calibration` to compare the live 36-mode catenary vs the implicit distributed reference.

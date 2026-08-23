@@ -29,6 +29,12 @@ DEPLOYED_ROLLOUT_STEPS = 18
 
 
 class ActuatorAwarePINNMPC:
+    """Hybrid actuator-aware Physics-Informed Neural Network Model Predictive Controller.
+
+    Integrates a PINN predictor with an explicit actuator model to preview delayed
+    force trajectories and roll out pantograph states, optimizing control effort and tracking error.
+    """
+
     def __init__(
         self,
         predictor: PINNPredictor,
@@ -51,6 +57,32 @@ class ActuatorAwarePINNMPC:
         force_bias_limit: float = 10.0,
         force_bias_command_gain: float = 0.5,
     ):
+        """Initializes the PINN-MPC controller with the given predictive models and weights.
+
+        Args:
+            predictor (PINNPredictor): The physics-informed neural network used for state prediction.
+            actuator (ForceActuator): The actuator model used to preview physical force responses.
+            dist: Disturbance model for aerodynamic and mechanical interactions.
+            speed_ms (float): Train speed in meters per second.
+            beyond (BeyondEnvelope): Parameters extending the simulation envelope.
+            setpoint (float, optional): Target contact force in Newtons. Defaults to 115.0.
+            n_candidates (int, optional): Number of discrete force commands to evaluate. Defaults to 21.
+            rollout_steps (int, optional): Number of prediction steps in the MPC horizon. Defaults to 18.
+            control_period (float, optional): The time interval between control updates in seconds. Defaults to 10.0e-3.
+            w_effort (float, optional): Penalty weight for absolute control effort. Defaults to 2.0e-4.
+            w_rate (float, optional): Penalty weight for the rate of change of the command. Defaults to 1.5e-3.
+            wire_estimate (optional): An estimator for the catenary wire state dynamics. Defaults to None.
+            w_wave_position (float, optional): Penalty weight for wave displacement. Defaults to 1.0.
+            w_wave_velocity (float, optional): Penalty weight for wave velocity. Defaults to 2.0e-3.
+            command_limit (float | None, optional): Explicit limit on command force, defaults to actuator limits if None.
+            force_resolution (float, optional): Resolution threshold for considering costs equivalent. Defaults to 0.10.
+            force_bias_time_constant (float, optional): Time constant for the integral force bias correction. Defaults to 0.25.
+            force_bias_limit (float, optional): Maximum allowed integral force bias correction. Defaults to 10.0.
+            force_bias_command_gain (float, optional): Feedforward gain for the force bias correction. Defaults to 0.5.
+
+        Raises:
+            ValueError: If command_limit, force_resolution, or force bias dynamics are invalid.
+        """
         self.pred = predictor
         self.actuator = actuator
         self.dist = dist
@@ -99,6 +131,17 @@ class ActuatorAwarePINNMPC:
         self._deadline_misses = deque(maxlen=500)
 
     def __call__(self, t: float, state, measured_force: float | None) -> float:
+        """Evaluates the optimal control action for the current state and time.
+
+        Args:
+            t (float): Current simulation or physical time in seconds.
+            state: Current pantograph state vector.
+            measured_force (float | None): Most recent measured contact force in Newtons.
+                Used for integral bias correction if provided.
+
+        Returns:
+            float: The optimal force command in Newtons to apply for the current control period.
+        """
         if not self._scheduler.due(t):
             return self._held
         started = time.perf_counter()
@@ -221,6 +264,12 @@ class ActuatorAwarePINNMPC:
         return best
 
     def timing_metrics(self) -> dict:
+        """Calculates latency and deadline miss statistics for the controller execution.
+
+        Returns:
+            dict: A dictionary containing 'latency_p95_ms', 'latency_p99_ms',
+                'deadline_miss_pct', and 'samples'.
+        """
         if not self._latencies:
             return {
                 "latency_p95_ms": 0.0,
@@ -237,5 +286,6 @@ class ActuatorAwarePINNMPC:
         }
 
     def reset_timing(self) -> None:
+        """Clears the accumulated latency and deadline miss history."""
         self._latencies.clear()
         self._deadline_misses.clear()

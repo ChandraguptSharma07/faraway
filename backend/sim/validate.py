@@ -51,6 +51,18 @@ LABELS = {
 
 
 def _in_range(val: float, lo: float, hi: float) -> bool:
+    """Checks if a value falls within a specified range, inclusive.
+
+    Applies a small tolerance for the zero-loss target due to floating point precision.
+
+    Args:
+        val: The value to check.
+        lo: The lower bound of the expected range.
+        hi: The upper bound of the expected range.
+
+    Returns:
+        True if the value is within the range, False otherwise.
+    """
     # Small tolerance on the zero-loss target for floating point.
     if lo == hi == 0:
         return val <= 1e-9
@@ -58,8 +70,18 @@ def _in_range(val: float, lo: float, hi: float) -> bool:
 
 
 def solve_ivp_crosscheck(speed_kmh: float, duration: float = 6.0) -> dict:
-    """Independent integration with scipy solve_ivp (RK45) to confirm the RK4 result
-    is not an artifact of the fixed-step scheme."""
+    """Independent integration with scipy solve_ivp (RK45) to cross-check results.
+    
+    Confirms that the RK4 result is not an artifact of the fixed-step scheme.
+
+    Args:
+        speed_kmh: The train speed in kilometers per hour.
+        duration: Total simulation duration in seconds. Defaults to 6.0.
+
+    Returns:
+        A dictionary containing the 'mean_N' (mean contact force) and 'std_N' 
+        (standard deviation of contact force) metrics.
+    """
     cat = CatenaryParams()
     panto = PantographParams()
     beyond = BeyondEnvelope()
@@ -88,6 +110,17 @@ def solve_ivp_crosscheck(speed_kmh: float, duration: float = 6.0) -> dict:
 
 
 def validate(verbose: bool = True) -> bool:
+    """Runs the EN 50318 validation gate against expected statistical ranges.
+
+    Simulates contact forces at 250 km/h and 300 km/h and compares key metrics
+    against the EN 50318:2002 Annex A reference results.
+
+    Args:
+        verbose: If True, prints detailed metric comparisons and cross-check results. Defaults to True.
+
+    Returns:
+        True if all metrics across all tested speeds fall within the accepted EN 50318 ranges, False otherwise.
+    """
     all_pass = True
     for speed in (250, 300):
         res = simulate(kmh_to_ms(speed), duration=6.0)

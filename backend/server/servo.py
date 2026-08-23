@@ -25,7 +25,19 @@ _LIKELY_VIDS = {0x10C4, 0x1A86, 0x0403, 0x2341, 0x303A}
 
 
 class ServoLink:
+    """Manages serial communication with an external servo microcontroller.
+
+    This class provides an interface to stream contact force commands
+    to a physical servo over a serial port, allowing physical demonstration
+    of the control loop. It fails silently if no hardware is available.
+
+    Attributes:
+        enabled (bool): Whether the serial link is currently active.
+        port (str | None): The device port string if connected, otherwise None.
+    """
+
     def __init__(self) -> None:
+        """Initializes the ServoLink and attempts hardware connection."""
         self.enabled = False
         self._ser = None
         self._last = 0.0
@@ -33,6 +45,11 @@ class ServoLink:
         self._connect()
 
     def _find_port(self):
+        """Finds a likely serial port for the servo controller.
+
+        Returns:
+            str | None: The port device path if found, otherwise None.
+        """
         forced = os.environ.get("AEROPINN_SERIAL_PORT")
         if forced:
             return forced
@@ -49,6 +66,7 @@ class ServoLink:
         return None
 
     def _connect(self) -> None:
+        """Attempts to open the serial port to the servo hardware."""
         try:
             import serial  # pyserial
         except Exception:
@@ -64,6 +82,11 @@ class ServoLink:
             self._ser = None  # port busy / permission -> disabled
 
     def send(self, f_control: float) -> None:
+        """Sends a control force command to the servo.
+
+        Args:
+            f_control (float): The control force command in newtons.
+        """
         if not self.enabled:
             return
         now = time.perf_counter()
@@ -82,9 +105,15 @@ class ServoLink:
                 pass
 
     def status(self) -> dict:
+        """Retrieves the current status of the servo link.
+
+        Returns:
+            dict: A dictionary containing 'servo_connected' and 'port' keys.
+        """
         return {"servo_connected": self.enabled, "port": self.port}
 
     def close(self) -> None:
+        """Closes the serial connection to the servo."""
         if self._ser is not None:
             try:
                 self._ser.close()

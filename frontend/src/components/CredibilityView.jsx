@@ -14,6 +14,14 @@ import {
 
 // The credibility panel: EN 50318 validation table (metrics inside the standard's
 // ranges) + PINN-vs-solver overlay + timing comparison. The headline shot.
+/**
+ * The credibility panel component displaying EN 50318 validation metrics,
+ * PINN vs solver overlay charts, and shadow validation reports.
+ *
+ * @param {Object} props - The component props.
+ * @param {Function} props.onClose - Callback to close the credibility panel.
+ * @returns {JSX.Element} The CredibilityView component.
+ */
 export default function CredibilityView({ onClose }) {
   const [val, setVal] = useState(null)
   const [ov, setOv] = useState(null)
@@ -128,6 +136,15 @@ export default function CredibilityView({ onClose }) {
   )
 }
 
+/**
+ * Renders a validation table for a specific speed, checking metrics against EN 50318 ranges.
+ *
+ * @param {Object} props - The component props.
+ * @param {string} props.speed - The simulation speed in km/h.
+ * @param {Object} props.data - The validation data containing rows of metrics.
+ * @param {Array<Object>} props.data.rows - Array of metric rows.
+ * @returns {JSX.Element} The validation table component.
+ */
 function ValTable({ speed, data }) {
   const allPass = data.rows.every((r) => r.pass)
   return (
@@ -155,6 +172,16 @@ function ValTable({ speed, data }) {
   )
 }
 
+/**
+ * Renders a high-performance uPlot chart comparing the PINN prediction against the classical solver.
+ *
+ * @param {Object} props - The component props.
+ * @param {Object} props.ov - The overlay chart data.
+ * @param {Array<number>} props.ov.t - Array of time values.
+ * @param {Array<number>} props.ov.f_solver - Array of classical solver force values.
+ * @param {Array<number>} props.ov.f_pinn - Array of PINN prediction force values.
+ * @returns {JSX.Element} The overlay chart component.
+ */
 function OverlayChart({ ov }) {
   const ref = useRef(null)
   useEffect(() => {
@@ -193,6 +220,21 @@ function OverlayChart({ ov }) {
   )
 }
 
+/**
+ * Renders a shadow validation report card for a specific speed scenario, comparing reduced vs distributed models.
+ *
+ * @param {Object} props - The component props.
+ * @param {Object} props.report - The shadow validation report data.
+ * @param {string} props.report.status - The current status of the report (e.g., 'WARMING_UP', 'ERROR').
+ * @param {string|number} props.report.speed_kmh - The speed in km/h for this report.
+ * @param {string} [props.report.error] - Optional error message if status is 'ERROR'.
+ * @param {Object} [props.report.metrics] - Key metrics comparing legacy vs distributed models.
+ * @param {Array<Object>} [props.report.gates] - Validation gates with pass/fail status.
+ * @param {string} [props.report.scope] - The scope of the shadow validation.
+ * @param {string} [props.report.source_commit] - The source commit hash.
+ * @param {string} [props.col1] - Optional label override for the primary comparison column.
+ * @returns {JSX.Element} The shadow card component.
+ */
 function ShadowCard({ report, col1 }) {
   const stateClass = report.status.toLowerCase().replace('_', '-')
   if (report.status === 'WARMING_UP' || report.status === 'ERROR') {
@@ -247,6 +289,16 @@ function ShadowCard({ report, col1 }) {
   )
 }
 
+/**
+ * Displays a large emphasized number with a label and optional unit.
+ *
+ * @param {Object} props - The component props.
+ * @param {string} props.label - The description label for the number.
+ * @param {number|string} props.value - The numerical value to display.
+ * @param {string} [props.unit] - An optional unit string.
+ * @param {boolean} [props.accent] - If true, applies an accent styling.
+ * @returns {JSX.Element} The big number display component.
+ */
 function BigNum({ label, value, unit, accent }) {
   return (
     <div className={`bignum ${accent ? 'accent' : ''}`}>
@@ -256,4 +308,9 @@ function BigNum({ label, value, unit, accent }) {
   )
 }
 
+/**
+ * A simple loading indicator component.
+ *
+ * @returns {JSX.Element} The loading component.
+ */
 const Loading = () => <div className="cred-loading mono">computing…</div>

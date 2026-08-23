@@ -45,13 +45,35 @@ ACCEL_SCALE = 20.0  # maps the tau^2 network term to a physical acceleration sca
 
 @dataclass(frozen=True)
 class PinnConfig:
+    """Configuration parameters for the Physics-Informed Neural Network (PINN).
+
+    Attributes:
+        horizon (float): Prediction horizon H in seconds.
+        hidden (int): Number of hidden units per layer in the MLP.
+        depth (int): Number of hidden layers in the MLP.
+    """
     horizon: float = 5.0e-3   # s   prediction horizon H
     hidden: int = 64
     depth: int = 3
 
 
 def context_from(z1, z1d, z2, z2d, f_aero, f_frame, y0, y0d, y0dd) -> torch.Tensor:
-    """Assemble a (…, 9) context tensor from raw physical quantities."""
+    """Assemble a (…, 9) context tensor from raw physical quantities.
+
+    Args:
+        z1 (float or torch.Tensor): Mass 1 (head) displacement.
+        z1d (float or torch.Tensor): Mass 1 velocity.
+        z2 (float or torch.Tensor): Mass 2 (frame) displacement.
+        z2d (float or torch.Tensor): Mass 2 velocity.
+        f_aero (float or torch.Tensor): Aerodynamic force on the head.
+        f_frame (float or torch.Tensor): Applied control force on the frame.
+        y0 (float or torch.Tensor): Wire position.
+        y0d (float or torch.Tensor): Wire velocity.
+        y0dd (float or torch.Tensor): Wire acceleration.
+
+    Returns:
+        torch.Tensor: A stacked tensor of shape (..., 9) with dtype float32.
+    """
     return torch.stack(
         [
             torch.as_tensor(z1), torch.as_tensor(z1d),
@@ -64,7 +86,19 @@ def context_from(z1, z1d, z2, z2d, f_aero, f_frame, y0, y0d, y0dd) -> torch.Tens
 
 
 class PantoPINN(nn.Module):
+    """Physics-Informed Neural Network predictor for pantograph dynamics.
+
+    Predicts short-horizon dynamics and contact forces based on the current state, 
+    disturbance, and applied control force.
+    """
+
     def __init__(self, cfg: PinnConfig | None = None, panto: PantographParams | None = None):
+        """Initialize the PantoPINN model.
+
+        Args:
+            cfg (PinnConfig | None, optional): PINN configuration. Defaults to None.
+            panto (PantographParams | None, optional): Pantograph parameters. Defaults to None.
+        """
         super().__init__()
         self.cfg = cfg or PinnConfig()
         self.panto = panto or PantographParams()
@@ -83,12 +117,31 @@ class PantoPINN(nn.Module):
         )
 
     def _raw(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
+        """Compute the raw, unconstrained output of the underlying neural network.
+
+        Args:
+            tau (torch.Tensor): Time values within the prediction horizon.
+            ctx (torch.Tensor): Context tensor containing current state and forces.
+
+        Returns:
+            torch.Tensor: Raw network output representing internal acceleration factors.
+        """
         tau_n = tau / self.cfg.horizon
         ctx_n = ctx / self.ctx_scale
         return self.net(torch.cat([tau_n, ctx_n], dim=-1))
 
     def trajectory(self, tau: torch.Tensor, ctx: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return (z1(tau), z2(tau)) with the hard IC constraint applied."""
+        """Compute the predicted position trajectory with hard initial condition constraints.
+
+        Args:
+            tau (torch.Tensor): Time values within the prediction horizon.
+            ctx (torch.Tensor): Context tensor containing current state and forces.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - z1 (torch.Tensor): Predicted mass 1 (head) displacement at time tau.
+                - z2 (torch.Tensor): Predicted mass 2 (frame) displacement at time tau.
+        """
         n = self._raw(tau, ctx)
         z1_0, z1d_0, z2_0, z2d_0 = ctx[..., 0:1], ctx[..., 1:2], ctx[..., 2:3], ctx[..., 3:4]
         t2 = tau * tau
@@ -97,21 +150,60 @@ class PantoPINN(nn.Module):
         return z1, z2
 
     def wire(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
+        """Estimate the local wire position using a quadratic extrapolation.
+
+        Args:
+            tau (torch.Tensor): Time values within the prediction horizon.
+            ctx (torch.Tensor): Context tensor containing wire features.
+
+        Returns:
+            torch.Tensor: Extrapolated wire position at time tau.
+        """
         y0, y0d, y0dd = ctx[..., 6:7], ctx[..., 7:8], ctx[..., 8:9]
         return y0 + y0d * tau + 0.5 * y0dd * tau * tau
 
     def contact_force(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
+        """Calculate the predicted physical contact force at time tau.
+
+        Args:
+            tau (torch.Tensor): Time values within the prediction horizon.
+            ctx (torch.Tensor): Context tensor containing current state and wire features.
+
+        Returns:
+            torch.Tensor: The predicted contact force (constrained to be non-negative).
+        """
         z1, _ = self.trajectory(tau, ctx)
         yw = self.wire(tau, ctx)
         return torch.relu(self.panto.kc * (z1 - yw))
 
     def forward(self, tau: torch.Tensor, ctx: torch.Tensor) -> torch.Tensor:
-        """Predicted contact force at tau (alias for contact_force)."""
+        """Forward pass to predict contact force at time tau (alias for contact_force).
+
+        Args:
+            tau (torch.Tensor): Time values within the prediction horizon.
+            ctx (torch.Tensor): Context tensor containing current state and forces.
+
+        Returns:
+            torch.Tensor: The predicted contact force.
+        """
         return self.contact_force(tau, ctx)
 
     # --- physics residual (autograd in tau) --------------------------------
     def ode_residual(self, tau: torch.Tensor, ctx: torch.Tensor):
-        """EN 50318 EOM residuals using autograd second derivatives of z1, z2."""
+        """Compute the physics-informed loss residuals using the EN 50318 EOM.
+
+        Uses automatic differentiation to find the second time derivatives of z1 and z2, 
+        and evaluates the equation of motion residuals.
+
+        Args:
+            tau (torch.Tensor): Time values within the prediction horizon.
+            ctx (torch.Tensor): Context tensor containing current state and forces.
+
+        Returns:
+            tuple[torch.Tensor, torch.Tensor]: A tuple containing:
+                - res1 (torch.Tensor): Equation of motion residual for mass 1.
+                - res2 (torch.Tensor): Equation of motion residual for mass 2.
+        """
         tau = tau.clone().requires_grad_(True)
         z1, z2 = self.trajectory(tau, ctx)
 

@@ -16,6 +16,18 @@ def minimum_effort_near_optimum(
     Costs closer than ``tolerance`` cannot be distinguished by the declared sensor
     resolution. Choosing minimum effort prevents roundoff from flipping adjacent
     commands; the previous command breaks equal-effort ties.
+
+    Args:
+        costs: A 1-D numpy array of evaluated costs for each candidate command.
+        candidates: A 1-D numpy array of candidate commands.
+        tolerance: The cost tolerance within which candidates are considered equivalent.
+        previous: The previously selected command, used to break equal-effort ties.
+
+    Returns:
+        The index of the selected optimal candidate.
+
+    Raises:
+        ValueError: If costs and candidates are not matching 1-D arrays, if tolerance is negative, or if costs contain non-finite values.
     """
     values = np.asarray(costs, dtype=np.float64)
     commands = np.asarray(candidates, dtype=np.float64)

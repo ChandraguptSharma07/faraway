@@ -13,10 +13,28 @@ const PANTOGRAPH_X = -6.4
 const PANTOGRAPH_Y = -0.42
 const MILLIMETRES_TO_SCENE = 0.001
 
+/**
+ * Clamps a value between a minimum and maximum bound.
+ *
+ * @function clamp
+ * @param {number} value - The value to clamp.
+ * @param {number} low - The minimum bound.
+ * @param {number} high - The maximum bound.
+ * @returns {number} The clamped value.
+ */
 function clamp(value, low, high) {
   return Math.max(low, Math.min(high, value))
 }
 
+/**
+ * Positions and scales a cylindrical mesh to connect two points in 3D space.
+ *
+ * @function setRod
+ * @param {THREE.Mesh} mesh - The cylinder mesh to modify.
+ * @param {THREE.Vector3} a - The starting point.
+ * @param {THREE.Vector3} b - The ending point.
+ * @returns {void}
+ */
 function setRod(mesh, a, b) {
   const direction = new THREE.Vector3().subVectors(b, a)
   const length = direction.length()
@@ -25,6 +43,14 @@ function setRod(mesh, a, b) {
   mesh.quaternion.setFromUnitVectors(Y_AXIS, direction.normalize())
 }
 
+/**
+ * Creates a generic cylindrical rod mesh.
+ *
+ * @function makeRod
+ * @param {THREE.Material} material - The material for the rod.
+ * @param {number} [radius=0.045] - The radius of the rod.
+ * @returns {THREE.Mesh} The instantiated rod mesh.
+ */
 function makeRod(material, radius = 0.045) {
   return new THREE.Mesh(
     new THREE.CylinderGeometry(radius, radius, 1, 10),
@@ -32,6 +58,13 @@ function makeRod(material, radius = 0.045) {
   )
 }
 
+/**
+ * Constructs a pantograph 3D model and returns its group and an update function.
+ *
+ * @function makePantograph
+ * @param {boolean} isActive - Whether the pantograph is the active AeroPINN variant.
+ * @returns {Object} An object containing the pantograph group and an update function.
+ */
 function makePantograph(isActive) {
   const group = new THREE.Group()
   group.name = isActive ? 'AeroPINN_pantograph' : 'passive_pantograph'
@@ -250,6 +283,13 @@ function makePantograph(isActive) {
   }
 }
 
+/**
+ * Creates the catenary wire visual representation for a lane.
+ *
+ * @function makeWire
+ * @param {number} laneZ - The Z-coordinate of the lane.
+ * @returns {Object} An object containing the wire line, messenger line, and an update function.
+ */
 function makeWire(laneZ) {
   const count = 33
   const geometry = new THREE.BufferGeometry()
@@ -289,6 +329,13 @@ function makeWire(laneZ) {
   }
 }
 
+/**
+ * Creates the railway track visual representation for a lane.
+ *
+ * @function makeTrack
+ * @param {number} laneZ - The Z-coordinate of the lane.
+ * @returns {Object} An object containing the track group and an update function.
+ */
 function makeTrack(laneZ) {
   const group = new THREE.Group()
   const railMaterial = new THREE.MeshStandardMaterial({ color: 0x59626d, metalness: 0.8, roughness: 0.35 })
@@ -317,6 +364,13 @@ function makeTrack(laneZ) {
   }
 }
 
+/**
+ * Trims a loaded train model to only keep the lead car.
+ *
+ * @function keepLeadCar
+ * @param {THREE.Scene} scene - The loaded GLTF scene.
+ * @returns {void}
+ */
 function keepLeadCar(scene) {
   const root = scene.getObjectByName('RootNode')
   if (!root) return
@@ -329,6 +383,15 @@ function keepLeadCar(scene) {
   }
 }
 
+/**
+ * Constructs a complete simulation lane containing a train car and pantograph.
+ *
+ * @function makeLane
+ * @param {THREE.Scene} source - The source GLTF scene for the train.
+ * @param {number} laneZ - The Z-coordinate of the lane.
+ * @param {boolean} isActive - Whether the lane uses the active AeroPINN pantograph.
+ * @returns {Object} An object containing the root group and the pantograph object.
+ */
 function makeLane(source, laneZ, isActive) {
   const root = new THREE.Group()
   root.position.z = laneZ
@@ -349,6 +412,18 @@ function makeLane(source, laneZ, isActive) {
   return { root, pantograph }
 }
 
+/**
+ * Renders the 3D world containing the train simulation digital twin.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {Object} props.frameRef - A mutable ref object containing the latest telemetry frame data.
+ * @param {boolean} props.prefersReducedMotion - Whether the user prefers reduced motion (disables camera damping and smoothing).
+ * @param {boolean} [props.showPhysics=true] - Whether to render physics force vectors.
+ * @param {number} [props.motionGain=1] - A multiplier for exaggerating small mechanical motions.
+ * @param {number} [props.cameraReset=0] - A counter that resets the camera view when incremented.
+ * @returns {JSX.Element} The rendered World3D component.
+ */
 export default function World3D({
   frameRef,
   prefersReducedMotion,
@@ -555,6 +630,17 @@ export default function World3D({
   )
 }
 
+/**
+ * Renders the heads-up display overlay for a specific lane.
+ *
+ * @component
+ * @param {Object} props - The component props.
+ * @param {string} props.label - The label for the lane (e.g., "PASSIVE").
+ * @param {Object} props.system - The system state object containing contact force and displacement data.
+ * @param {string} props.side - The side of the screen to render the HUD ("left" or "right").
+ * @param {boolean} [props.active] - Whether this HUD represents the active AeroPINN lane.
+ * @returns {JSX.Element} The rendered LaneHud component.
+ */
 function LaneHud({ label, system, side, active }) {
   const lost = system?.contact_lost
   return (

@@ -27,6 +27,24 @@ def run_comparison(
     dt: float = 1.0e-3,
     disturbance_factory=Disturbance,
 ):
+    """Runs a parallel simulation comparing a passive pantograph to an AeroPINN-controlled one.
+
+    Both simulations are subjected to identical disturbance profiles to allow for a direct
+    performance comparison based on contact force standard deviation and arcing duration.
+
+    Args:
+        speed_kmh (float): The simulated train speed in kilometers per hour.
+        beyond (BeyondEnvelope | None, optional): Environmental and simulation boundary extensions.
+        duration (float, optional): The duration of the simulation in seconds. Defaults to 6.0.
+        seed (int, optional): Random seed used for generating the disturbance profile. Defaults to 999.
+        predictor (PINNPredictor | None, optional): The PINN model to use for the active controller.
+        dt (float, optional): Simulation time step in seconds. Defaults to 1.0e-3.
+        disturbance_factory (callable, optional): Factory function for creating disturbance objects. Defaults to Disturbance.
+
+    Returns:
+        dict: A dictionary containing comparison metrics, the simulation configurations,
+            and raw simulation results for both the passive and aeropinn runs.
+    """
     beyond = beyond or BeyondEnvelope()
     predictor = predictor or PINNPredictor()
     cat = CatenaryParams()
@@ -57,6 +75,16 @@ def run_comparison(
     )
 
     def applied_force(t, state, force):
+        """Wrapper to apply the PINN-MPC command to the force actuator.
+
+        Args:
+            t (float): Current simulation time in seconds.
+            state: Current pantograph state vector.
+            force (float): Currently measured contact force in Newtons.
+
+        Returns:
+            float: The applied actuator force for this timestep in Newtons.
+        """
         return actuator.step(controller(t, state, force))
 
     aeropinn = simulate(
@@ -89,7 +117,22 @@ def run_live_comparison(
     seed: int = 999,
     predictor: PINNPredictor | None = None,
 ):
-    """Exercise the same coupled, estimated-state controller used by the server."""
+    """Exercise the same coupled, estimated-state controller used by the server.
+
+    Runs the deployed Engine configuration which includes the full sensor estimation
+    loop, unlike the idealized state feedback used in run_comparison.
+
+    Args:
+        speed_kmh (float): The simulated train speed in kilometers per hour.
+        beyond (BeyondEnvelope | None, optional): Environmental and simulation boundary extensions.
+        duration (float, optional): The duration of the scored simulation interval in seconds. Defaults to 2.0.
+        settle_duration (float, optional): Initial unscored stabilization period in seconds. Defaults to 1.0.
+        seed (int, optional): Random seed used for disturbance generation. Defaults to 999.
+        predictor (PINNPredictor | None, optional): The PINN model to use for prediction.
+
+    Returns:
+        dict: A dictionary containing force tracking and timing metrics for the live controller.
+    """
     from backend.server.engine import Engine
 
     beyond = beyond or BeyondEnvelope()
@@ -112,6 +155,14 @@ def run_live_comparison(
         active[index] = engine.force_a
 
     def force_metrics(values):
+        """Computes statistical metrics from an array of contact forces.
+
+        Args:
+            values (np.ndarray): An array of contact forces in Newtons.
+
+        Returns:
+            dict: A dictionary containing mean, standard deviation, and percentage of contact loss.
+        """
         return {
             "mean_N": float(np.mean(values)),
             "std_N": float(np.std(values)),
@@ -134,6 +185,14 @@ def run_live_comparison(
 
 
 def _fmt(m):
+    """Formats contact force metrics into a human-readable string.
+
+    Args:
+        m (dict): A dictionary of metrics containing 'mean_N', 'std_N', and 'loss_of_contact_pct'.
+
+    Returns:
+        str: A formatted string summarizing the provided metrics.
+    """
     return f"mean={m['mean_N']:6.1f}  std={m['std_N']:6.2f}  loss={m['loss_of_contact_pct']:5.2f}%"
 
 

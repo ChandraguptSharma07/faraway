@@ -13,7 +13,18 @@ from .parameters import DistributedCatenaryParams
 
 
 def _wire_matrices(n: int, dx: float, mass_per_m: float, tension: float, ei: float):
-    """Lumped mass plus tensioned Euler--Bernoulli finite-difference stiffness."""
+    """Lumped mass plus tensioned Euler--Bernoulli finite-difference stiffness.
+
+    Args:
+        n (int): Number of nodes.
+        dx (float): Spatial step size in meters.
+        mass_per_m (float): Mass per unit length in kg/m.
+        tension (float): Applied mechanical tension in N.
+        ei (float): Bending stiffness in N*m^2.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing the mass matrix and the stiffness matrix.
+    """
     mass = np.full(n, mass_per_m * dx)
     mass[[0, -1]] *= 0.5
     d1 = np.zeros((n - 1, n))
@@ -27,6 +38,16 @@ def _wire_matrices(n: int, dx: float, mass_per_m: float, tension: float, ei: flo
 
 
 def interpolation_weights(x: float, dx: float, n_nodes: int) -> tuple[np.ndarray, np.ndarray]:
+    """Calculate interpolation nodes and weights for a given position.
+
+    Args:
+        x (float): Longitudinal position along the span in meters.
+        dx (float): Spatial step size between nodes in meters.
+        n_nodes (int): Total number of nodes in the wire.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple of (node indices, corresponding interpolation weights).
+    """
     x = float(np.clip(x, 0.0, dx * (n_nodes - 1)))
     left = min(int(x // dx), n_nodes - 2)
     r = (x - left * dx) / dx
@@ -35,6 +56,17 @@ def interpolation_weights(x: float, dx: float, n_nodes: int) -> tuple[np.ndarray
 
 @dataclass
 class DistributedSystem:
+    """A distributed parameter model representing the physical wire and pantograph system.
+
+    Attributes:
+        params (DistributedCatenaryParams): Physical and geometric parameters of the catenary.
+        panto (PantographParams): Mechanical parameters of the pantograph.
+        M (np.ndarray): Global mass matrix of the coupled system.
+        K_structure (np.ndarray): Global stiffness matrix representing the structural elasticity.
+        C (np.ndarray): Global proportional damping matrix.
+        dropper_vectors (tuple[np.ndarray, ...]): Basis vectors representing dropper connectivity.
+        support_nodes (np.ndarray): Array of node indices where the catenary is supported.
+    """
     params: DistributedCatenaryParams
     panto: PantographParams
     M: np.ndarray
@@ -45,28 +77,63 @@ class DistributedSystem:
 
     @property
     def n_wire(self) -> int:
+        """Get the number of nodes in a single wire.
+
+        Returns:
+            int: Number of nodes.
+        """
         return self.params.n_nodes
 
     @property
     def ndof(self) -> int:
+        """Get the total number of degrees of freedom in the system.
+
+        Returns:
+            int: Total degrees of freedom.
+        """
         return self.M.shape[0]
 
     @property
     def z1_index(self) -> int:
+        """Get the degree of freedom index for the pantograph panhead (z1).
+
+        Returns:
+            int: The index for z1.
+        """
         return 2 * self.n_wire
 
     @property
     def z2_index(self) -> int:
+        """Get the degree of freedom index for the pantograph frame (z2).
+
+        Returns:
+            int: The index for z2.
+        """
         return 2 * self.n_wire + 1
 
     def wire_reference(self, x: float) -> tuple[float, float]:
-        """Presag datum and spatial derivative at longitudinal position ``x``."""
+        """Presag datum and spatial derivative at longitudinal position ``x``.
+
+        Args:
+            x (float): Longitudinal position along the span in meters.
+
+        Returns:
+            tuple[float, float]: The presag displacement and its spatial derivative at position ``x``.
+        """
         local = (x % self.params.span_length) / self.params.span_length
         y = -4.0 * self.params.maximum_presag * local * (1.0 - local)
         dydx = -4.0 * self.params.maximum_presag * (1.0 - 2.0 * local) / self.params.span_length
         return y, dydx
 
     def contact_vector(self, x: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Determine the contact distribution vector and active nodes at position ``x``.
+
+        Args:
+            x (float): Longitudinal position along the span in meters.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, np.ndarray]: Contact force distribution vector, active node indices, and interpolation weights.
+        """
         nodes, weights = interpolation_weights(x, self.params.dx, self.n_wire)
         g = np.zeros(self.ndof)
         g[nodes] = -weights
@@ -74,7 +141,14 @@ class DistributedSystem:
         return g, nodes, weights
 
     def active_structure(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
-        """Add tension-only droppers; return K, equilibrium correction, slack count."""
+        """Add tension-only droppers; return K, equilibrium correction, slack count.
+
+        Args:
+            q (np.ndarray): Current generalized displacement state vector.
+
+        Returns:
+            tuple[np.ndarray, np.ndarray, int]: The active stiffness matrix, equilibrium correction vector, and number of slack droppers.
+        """
         k = self.K_structure.copy()
         rhs = np.zeros(self.ndof)
         slack = 0
@@ -95,6 +169,15 @@ def assemble_system(
     params: DistributedCatenaryParams | None = None,
     panto: PantographParams | None = None,
 ) -> DistributedSystem:
+    """Construct the finite-difference matrices and assemble the complete distributed system.
+
+    Args:
+        params (DistributedCatenaryParams | None, optional): Distributed catenary parameters. Defaults to None.
+        panto (PantographParams | None, optional): Pantograph physical parameters. Defaults to None.
+
+    Returns:
+        DistributedSystem: Fully assembled distributed system containing matrices and node mapping.
+    """
     params = params or DistributedCatenaryParams()
     panto = panto or PantographParams()
     n = params.n_nodes
@@ -149,7 +232,15 @@ def assemble_system(
 
 
 def structural_modes(system: DistributedSystem, count: int = 40):
-    """Return mass-normalized modes of the fully supported, active-dropper structure."""
+    """Return mass-normalized modes of the fully supported, active-dropper structure.
+
+    Args:
+        system (DistributedSystem): Assembled distributed system model.
+        count (int, optional): Number of structural modes to compute. Defaults to 40.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Structural mode frequencies in Hz, and mass-normalized eigenvectors.
+    """
     k, _, _ = system.active_structure(np.zeros(system.ndof))
     values, vectors = linalg.eigh(k, system.M, subset_by_index=(0, min(count, system.ndof) - 1))
     keep = values > 1e-8

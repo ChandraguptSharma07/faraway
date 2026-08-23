@@ -15,6 +15,33 @@ from dataclasses import dataclass, field
 
 @dataclass(frozen=True)
 class DistributedCatenaryParams:
+    """Parameters defining a distributed vertical catenary model.
+
+    This class encapsulates the physical, geometric, and numerical properties
+    required to simulate a railway catenary system. Default values correspond
+    to the 60 m simple-catenary benchmark.
+
+    Attributes:
+        span_length (float): Length of a single catenary span (m).
+        n_spans (int): Total number of spans in the model.
+        elements_per_span (int): Number of finite elements per span.
+        contact_mass_per_m (float): Mass per unit length of the contact wire (kg/m).
+        contact_tension (float): Applied mechanical tension in the contact wire (N).
+        contact_bending_stiffness (float): Bending stiffness of the contact wire (Nm^2).
+        messenger_mass_per_m (float): Mass per unit length of the messenger wire (kg/m).
+        messenger_tension (float): Applied mechanical tension in the messenger wire (N).
+        messenger_bending_stiffness (float): Bending stiffness of the messenger wire (Nm^2).
+        steady_arm_stiffness (float): Vertical stiffness of the steady arms (N/m).
+        messenger_support_stiffness (float): Vertical stiffness of the messenger wire supports (N/m).
+        dropper_stiffness (float): Axial stiffness of the droppers (N/m).
+        dropper_positions (tuple[float, ...]): Longitudinal positions of droppers within a span (m).
+        damping_ratio (float): Rayleigh damping ratio for the wire structure.
+        contact_stiffness (float): Assumed penalty stiffness for pantograph-wire contact (N/m).
+        contact_damping (float): Assumed penalty damping for pantograph-wire contact (Ns/m).
+        maximum_presag (float): Maximum mid-span presag allowed in the contact wire (m).
+        dropper_preload (float): Assumed static preload in the droppers to ensure tension (N).
+        end_anchor_stiffness (float): Vertical stiffness applied at the boundary anchors (N/m).
+    """
     # Published simple-catenary reference values.
     span_length: float = 60.0
     n_spans: int = 10
@@ -41,6 +68,13 @@ class DistributedCatenaryParams:
     end_anchor_stiffness: float = 1.0e7
 
     def __post_init__(self) -> None:
+        """Validates the initialized parameters.
+
+        Raises:
+            ValueError: If any physical dimensions, masses, tensions, or stiffnesses
+                are non-positive, or if dropper positions do not lie strictly within
+                a single span.
+        """
         positive = (
             self.span_length,
             self.n_spans,
@@ -60,14 +94,29 @@ class DistributedCatenaryParams:
 
     @property
     def dx(self) -> float:
+        """Calculates the length of a single finite element.
+
+        Returns:
+            float: The element length in meters.
+        """
         return self.span_length / self.elements_per_span
 
     @property
     def n_nodes(self) -> int:
+        """Calculates the total number of nodes in the continuous wire model.
+
+        Returns:
+            int: The total number of nodes.
+        """
         return self.n_spans * self.elements_per_span + 1
 
     @property
     def length(self) -> float:
+        """Calculates the total longitudinal length of the catenary model.
+
+        Returns:
+            float: The total length in meters.
+        """
         return self.n_spans * self.span_length
 
 
