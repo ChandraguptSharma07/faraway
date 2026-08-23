@@ -17,7 +17,9 @@ export default function App() {
   )
   const [reduced, setReduced] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [showPhysics, setShowPhysics] = useState(true)
-  const [amplifyMotion, setAmplifyMotion] = useState(false)
+  // Real pantograph travel is only a few pixels at this scene scale. Start the
+  // demo in an explicitly labelled amplified view; telemetry and exports stay raw.
+  const [amplifyMotion, setAmplifyMotion] = useState(true)
   const [cameraReset, setCameraReset] = useState(0)
 
   useEffect(() => {

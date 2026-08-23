@@ -74,6 +74,7 @@
 .lane-hud.active .lane-hud-title { color: var(--accent); }
 .lane-hud-value { margin-top: 1px; font-size: 21px; font-weight: 700; }
 .lane-hud-value small { color: var(--text-dim); font-size: 11px; }
+.lane-hud-motion { margin-top: 2px; color: var(--text-dim); font-size: 9px; letter-spacing: 0.06em; }
 .lane-hud-state { color: var(--text-mute); font-size: 9px; font-weight: 700; letter-spacing: 0.1em; }
 .lane-hud.lost .lane-hud-state { color: var(--arc); }
 .world3d-nav-hint {

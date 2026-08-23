@@ -132,23 +132,64 @@ function makePantograph(isActive) {
   )
   group.add(arc)
 
+  const visualState = {
+    initialized: false,
+    headMm: 0,
+    wireMm: 0,
+    frameMm: 0,
+    referenceHeadMm: 0,
+    referenceWireMm: 0,
+    referenceFrameMm: 0,
+  }
+
   return {
     group,
     update(system, frame, showPhysics, reduced, motionGain) {
-      const headMm = system?.head_mm ?? 0
-      const wireMm = system?.wire_mm ?? frame?.wire_mm ?? 0
+      const targetHeadMm = system?.head_mm ?? 0
+      const targetWireMm = system?.wire_mm ?? frame?.wire_mm ?? 0
+      const targetFrameMm = system?.frame_mm ?? 0
+      if (system && !visualState.initialized) {
+        visualState.headMm = targetHeadMm
+        visualState.wireMm = targetWireMm
+        visualState.frameMm = targetFrameMm
+        visualState.referenceHeadMm = targetHeadMm
+        visualState.referenceWireMm = targetWireMm
+        visualState.referenceFrameMm = targetFrameMm
+        visualState.initialized = true
+      } else if (visualState.initialized) {
+        // The backend publishes at 30 Hz. Ease those samples across render frames
+        // so millimetre-scale arm articulation reads as continuous mechanical motion.
+        const smoothing = reduced ? 1 : 0.22
+        visualState.headMm += (targetHeadMm - visualState.headMm) * smoothing
+        visualState.wireMm += (targetWireMm - visualState.wireMm) * smoothing
+        visualState.frameMm += (targetFrameMm - visualState.frameMm) * smoothing
+      }
+      const headMm = visualState.headMm
+      const wireMm = visualState.wireMm
       const lost = system?.contact_lost ?? false
-      const frameMm = system?.frame_mm ?? 0
+      const frameMm = visualState.frameMm
       const baseY = 2.0
-      const scenePerMm = MILLIMETRES_TO_SCENE * motionGain
-      let topY = 3.25 + clamp(headMm, -100, 100) * scenePerMm
-      const wireY = 3.25 + clamp(wireMm, -100, 100) * scenePerMm
-      const visibleContactGap = 2 * scenePerMm
+      // Amplify travel around the settled pose, not the static equilibrium
+      // deflection. Scaling the latter would collapse the scissor geometry.
+      const visualHeadMm = visualState.referenceHeadMm
+        + (headMm - visualState.referenceHeadMm) * motionGain
+      const visualWireMm = visualState.referenceWireMm
+        + (wireMm - visualState.referenceWireMm) * motionGain
+      const visualFrameMm = visualState.referenceFrameMm
+        + (frameMm - visualState.referenceFrameMm) * motionGain
+      let topY = 3.25 + clamp(visualHeadMm, -750, 750) * MILLIMETRES_TO_SCENE
+      const wireY = 3.25 + clamp(visualWireMm, -750, 750) * MILLIMETRES_TO_SCENE
+      const visibleContactGap = 2 * MILLIMETRES_TO_SCENE * motionGain
       if (lost && topY > wireY - visibleContactGap) {
         topY = wireY - visibleContactGap
       }
       topY = clamp(topY, baseY + 0.5, baseY + 2.5)
-      const midY = baseY + (topY - baseY) * 0.52 + clamp(frameMm, -100, 100) * scenePerMm
+      const midY = clamp(
+        baseY + (topY - baseY) * 0.52
+          + clamp(visualFrameMm, -750, 750) * MILLIMETRES_TO_SCENE,
+        baseY + 0.18,
+        topY - 0.18,
+      )
 
       const sides = [-0.34, 0.34]
       let index = 0
@@ -521,6 +562,9 @@ function LaneHud({ label, system, side, active }) {
       <div className="lane-hud-title">{label}</div>
       <div className="lane-hud-value mono">
         {system ? system.contact_force.toFixed(0) : '—'}<small> N</small>
+      </div>
+      <div className="lane-hud-motion mono">
+        HEAD {system ? `${system.head_mm >= 0 ? '+' : ''}${system.head_mm.toFixed(1)}` : '—'} mm
       </div>
       <div className="lane-hud-state">{lost ? 'CONTACT LOST · ARC' : 'CONTACT HELD'}</div>
     </div>
